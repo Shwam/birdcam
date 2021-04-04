@@ -1,30 +1,29 @@
+# based on https://github.com/experiencor/keras-yolo3
 import argparse
 import os, sys
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 import numpy as np
 from keras.layers import Conv2D, Input, BatchNormalization, LeakyReLU, ZeroPadding2D, UpSampling2D
 from keras.layers.merge import add, concatenate
 from keras.models import Model
 import struct
 import cv2
+from multiprocessing import Process
+from queue import Queue
+from datetime import datetime
 
-np.set_printoptions(threshold=sys.maxsize)
-os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"]="0"
-
-argparser = argparse.ArgumentParser(
-    description='test yolov3 network with coco weights')
-
-argparser.add_argument(
-    '-w',
-    '--weights',
-    help='path to weights file',
-    default='yolov3.weights')
-
-argparser.add_argument(
-    '-i',
-    '--image',
-    help='path to image file',
-    default='example.jpg')
+LABELS = ["person", "bicycle", "car", "motorbike", "aeroplane", "bus", "train", "truck", \
+              "boat", "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", \
+              "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", \
+              "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", \
+              "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard", \
+              "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", \
+              "apple", "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", \
+              "chair", "sofa", "pottedplant", "bed", "diningtable", "toilet", "tvmonitor", "laptop", "mouse", \
+              "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink", "refrigerator", \
+              "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush"]
+net_h, net_w = 416, 416
+obj_thresh, nms_thresh = 0.85, 0.45
 
 class WeightReader:
     def __init__(self, weight_file):
@@ -53,7 +52,7 @@ class WeightReader:
         for i in range(106):
             try:
                 conv_layer = model.get_layer('conv_' + str(i))
-                print("loading weights of convolution #" + str(i))
+                #print("loading weights of convolution #" + str(i))
 
                 if i not in [81, 93, 105]:
                     norm_layer = model.get_layer('bnorm_' + str(i))
@@ -80,7 +79,8 @@ class WeightReader:
                     kernel = kernel.transpose([2,3,1,0])
                     conv_layer.set_weights([kernel])
             except ValueError:
-                print("no convolution #" + str(i))     
+                #print("no convolution #" + str(i))
+                pass     
     
     def reset(self):
         self.offset = 0
@@ -162,7 +162,7 @@ def bbox_iou(box1, box2):
     
     return float(intersect) / union
 
-def make_yolov3_model():
+def make_yolov3_model(weights_path):
     input_image = Input(shape=(None, None, 3))
 
     # Layer  0 => 4
@@ -256,6 +256,11 @@ def make_yolov3_model():
                                {'filter': 255, 'kernel': 1, 'stride': 1, 'bnorm': False, 'leaky': False, 'layer_idx': 105}], skip=False)
 
     model = Model(input_image, [yolo_82, yolo_94, yolo_106])    
+    
+    # load the weights trained on COCO into the model
+    weight_reader = WeightReader(weights_path)
+    weight_reader.load_weights(model)
+
     return model
 
 def preprocess_input(image, net_h, net_w):
@@ -358,16 +363,21 @@ def do_nms(boxes, nms_thresh):
                 if bbox_iou(boxes[index_i], boxes[index_j]) >= nms_thresh:
                     boxes[index_j].classes[c] = 0
                     
-def draw_boxes(image, boxes, labels, obj_thresh):
+def draw_boxes(image, boxes):
+    # correct the sizes of the bounding boxes
+    boxes = boxes[:]
+    image_h, image_w, _ = image.shape
+    correct_yolo_boxes(boxes, image_h, image_w, net_h, net_w)
+
     for box in boxes:
         label_str = ''
         label = -1
         
-        for i in range(len(labels)):
+        for i in range(len(LABELS)):
             if box.classes[i] > obj_thresh:
-                label_str += labels[i]
+                label_str += LABELS[i]
                 label = i
-                print(labels[i] + ': ' + str(box.classes[i]*100) + '%')
+                #print(f"{LABELS[i]}: {box.classes[i]*100:.2f}%")
                 
         if label >= 0:
             cv2.rectangle(image, (box.xmin,box.ymin), (box.xmax,box.ymax), (0,255,0), 3)
@@ -380,57 +390,100 @@ def draw_boxes(image, boxes, labels, obj_thresh):
         
     return image      
 
-def _main_(args):
-    weights_path = args.weights
-    image_path   = args.image
-
-    # set some parameters
-    net_h, net_w = 416, 416
-    obj_thresh, nms_thresh = 0.5, 0.45
+def get_boxes(image, model):
     anchors = [[116,90,  156,198,  373,326],  [30,61, 62,45,  59,119], [10,13,  16,30,  33,23]]
-    labels = ["person", "bicycle", "car", "motorbike", "aeroplane", "bus", "train", "truck", \
-              "boat", "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", \
-              "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", \
-              "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", \
-              "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard", \
-              "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", \
-              "apple", "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", \
-              "chair", "sofa", "pottedplant", "bed", "diningtable", "toilet", "tvmonitor", "laptop", "mouse", \
-              "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink", "refrigerator", \
-              "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush"]
-
-    # make the yolov3 model to predict 80 classes on COCO
-    yolov3 = make_yolov3_model()
-
-    # load the weights trained on COCO into the model
-    weight_reader = WeightReader(weights_path)
-    weight_reader.load_weights(yolov3)
-
+    
     # preprocess the image
-    image = cv2.imread(image_path)
     image_h, image_w, _ = image.shape
     new_image = preprocess_input(image, net_h, net_w)
 
     # run the prediction
-    yolos = yolov3.predict(new_image)
+    yolos = model.predict(new_image)
     boxes = []
 
     for i in range(len(yolos)):
         # decode the output of the network
         boxes += decode_netout(yolos[i][0], anchors[i], obj_thresh, nms_thresh, net_h, net_w)
 
-    # correct the sizes of the bounding boxes
-    correct_yolo_boxes(boxes, image_h, image_w, net_h, net_w)
-
     # suppress non-maximal boxes
-    do_nms(boxes, nms_thresh)     
+    do_nms(boxes, nms_thresh)
+
+    return boxes
+
+def format_boxes(boxes):
+    useful_boxes = []
+    for box in boxes:
+        label_str = ''
+        label = -1
+        
+        for i in range(len(LABELS)):
+            if box.classes[i] > obj_thresh:
+                label_str += LABELS[i]
+                label = i
+                #print(f"{LABELS[i]}: {box.classes[i]*100:.2f}%")
+        if label >= 0:
+            useful_boxes.append((box.xmin/net_w,box.ymin/net_h,box.xmax/net_w,box.ymax/net_h,label_str,box.get_score()))
+
+    return useful_boxes
+
+def load_image(buffer):
+    bytes_as_np_array = np.frombuffer(buffer, dtype=np.uint8)
+    return cv2.imdecode(bytes_as_np_array, cv2.IMREAD_ANYCOLOR)
+
+def initialize(weights_path):
+    np.set_printoptions(threshold=sys.maxsize)
+    os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
+    os.environ["CUDA_VISIBLE_DEVICES"]="0"
+
+    # make the yolov3 model to predict 80 classes on COCO
+    model = make_yolov3_model(weights_path)
+
+    return model
+
+def image_process(input_queue, output_queue):
+    model = initialize("detection/yolov3.weights")
+    print("AI Initialized")
+    while True:
+        command = input_queue.get(block=True, timeout=None)
+        received = datetime.now().strftime("%Y%m%d-%H%M%S.jpg")
+        image = image = load_image(command)
+        boxes = get_boxes(image, model)
+        data = format_boxes(boxes)
+        output_queue.put(data)
+
+        # draw boxes and save
+        if data:
+            draw_boxes(image, boxes) 
+            cv2.imwrite(received, (image).astype('uint8')) 
+
+def main():
+    argparser = argparse.ArgumentParser(
+        description='test yolov3 network with coco weights')
+
+    argparser.add_argument(
+        '-w',
+        '--weights',
+        help='path to weights file',
+        default='detection/yolov3.weights')
+
+    argparser.add_argument(
+        '-i',
+        '--image',
+        help='path to image file',
+        default='images/example.jpg')
+    args = argparser.parse_args()
+
+    model = initialize(args.weights)
+    with open(args.image, "rb") as f:
+        image = load_image(f.read())
+    
+    boxes = get_boxes(image, model)
 
     # draw bounding boxes on the image using labels
-    draw_boxes(image, boxes, labels, obj_thresh) 
+    draw_boxes(image, boxes) 
  
     # write the image with bounding boxes to file
-    cv2.imwrite(image_path[:-4] + '_detected' + image_path[-4:], (image).astype('uint8')) 
+    cv2.imwrite('_detected.jpg', (image).astype('uint8')) 
 
 if __name__ == '__main__':
-    args = argparser.parse_args()
-    _main_(args)
+    main()

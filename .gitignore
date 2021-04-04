@@ -130,3 +130,6 @@ dmypy.json
 
 # YOLO weights
 detection/yolov3.weights
+
+# Saved images
+*.jpg

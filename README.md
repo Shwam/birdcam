@@ -5,7 +5,7 @@ Real-time bird detection, classification, and tracking for an IP PTZ camera
 First, set the environment variables `BIRDCAM_USER` and `BIRDCAM_PASS` to your IP Camera's web login credentials. 
 The web CGI uses HTTP Basic Authentication, meaning **your credentials will be sent unencrypted**.
 
-###`camera_control.py`
+### camera_control.py
 - arrow keys: Pan and tilt 
 - +/-: zoom
 - brackets: focus
@@ -13,7 +13,7 @@ The web CGI uses HTTP Basic Authentication, meaning **your credentials will be s
 - shift/ctrl: Change speed
 - a: toggle image processing
 
-###`detection/yolo_all` 
+### detection/yolo_all
 can be run by itself to test object detection
 
 ## Dependencies

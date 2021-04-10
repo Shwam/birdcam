@@ -2,6 +2,8 @@
 import argparse
 import os, sys
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+import tensorflow
+tensorflow.compat.v1.logging.set_verbosity(tensorflow.compat.v1.logging.ERROR)
 import numpy as np
 from keras.layers import Conv2D, Input, BatchNormalization, LeakyReLU, ZeroPadding2D, UpSampling2D
 from keras.layers.merge import add, concatenate
@@ -11,6 +13,7 @@ import cv2
 from multiprocessing import Process
 from queue import Queue
 from datetime import datetime
+import time
 
 LABELS = ["person", "bicycle", "car", "motorbike", "aeroplane", "bus", "train", "truck", \
               "boat", "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", \
@@ -23,7 +26,7 @@ LABELS = ["person", "bicycle", "car", "motorbike", "aeroplane", "bus", "train", 
               "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink", "refrigerator", \
               "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush"]
 net_h, net_w = 416, 416
-obj_thresh, nms_thresh = 0.85, 0.45
+obj_thresh, bird_thresh, nms_thresh = 0.95, 0.5, 0.45
 
 class WeightReader:
     def __init__(self, weight_file):
@@ -336,7 +339,7 @@ def correct_yolo_boxes(boxes, image_h, image_w, net_h, net_w):
         
     for i in range(len(boxes)):
         x_offset, x_scale = (net_w - new_w)/2./net_w, float(new_w)/net_w
-        y_offset, y_scale = (net_h - new_h)/2./net_h, float(new_h)/net_h
+        y_offset, y_scale = (net_h - new_h)/2./net_h + 0.025, float(new_h)/net_h
         
         boxes[i].xmin = int((boxes[i].xmin - x_offset) / x_scale * image_w)
         boxes[i].xmax = int((boxes[i].xmax - x_offset) / x_scale * image_w)
@@ -364,11 +367,6 @@ def do_nms(boxes, nms_thresh):
                     boxes[index_j].classes[c] = 0
                     
 def draw_boxes(image, boxes):
-    # correct the sizes of the bounding boxes
-    boxes = boxes[:]
-    image_h, image_w, _ = image.shape
-    correct_yolo_boxes(boxes, image_h, image_w, net_h, net_w)
-
     for box in boxes:
         label_str = ''
         label = -1
@@ -408,6 +406,8 @@ def get_boxes(image, model):
     # suppress non-maximal boxes
     do_nms(boxes, nms_thresh)
 
+    correct_yolo_boxes(boxes, image_h, image_w, net_h, net_w)
+
     return boxes
 
 def format_boxes(boxes):
@@ -417,12 +417,12 @@ def format_boxes(boxes):
         label = -1
         
         for i in range(len(LABELS)):
-            if box.classes[i] > obj_thresh:
+            if box.classes[i] > obj_thresh or LABELS[i] == "bird" and box.classes[i] > bird_thresh:
                 label_str += LABELS[i]
                 label = i
                 #print(f"{LABELS[i]}: {box.classes[i]*100:.2f}%")
         if label >= 0:
-            useful_boxes.append((box.xmin/net_w,box.ymin/net_h,box.xmax/net_w,box.ymax/net_h,label_str,box.get_score()))
+            useful_boxes.append((box.xmin,box.ymin,box.xmax,box.ymax,label_str,box.get_score()))
 
     return useful_boxes
 
@@ -445,16 +445,18 @@ def image_process(input_queue, output_queue):
     print("AI Initialized")
     while True:
         command = input_queue.get(block=True, timeout=None)
+        start = time.time()
         received = datetime.now().strftime("%Y%m%d-%H%M%S.jpg")
         image = image = load_image(command)
         boxes = get_boxes(image, model)
         data = format_boxes(boxes)
         output_queue.put(data)
+        #print(f"Processed image in {time.time() - start} seconds")
 
         # draw boxes and save
         if data:
             draw_boxes(image, boxes) 
-            cv2.imwrite(received, (image).astype('uint8')) 
+            cv2.imwrite("images/" + received, (image).astype('uint8')) 
 
 def main():
     argparser = argparse.ArgumentParser(
@@ -477,7 +479,8 @@ def main():
     with open(args.image, "rb") as f:
         image = load_image(f.read())
     
-    boxes = get_boxes(image, model)
+    for i in range(1000):
+        boxes = get_boxes(image, model)
 
     # draw bounding boxes on the image using labels
     draw_boxes(image, boxes) 

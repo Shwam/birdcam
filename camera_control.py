@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import pygame
 import requests
 import io
 import os
@@ -7,9 +6,13 @@ from datetime import datetime
 import random
 import time
 from urllib.parse import quote
-import rtsp
 import multiprocessing, threading
+
 from detection import yolo_all
+import rtsp
+import cv2
+import pygame
+import numpy as np
 
 IP_ADDRESS = "192.168.1.115"
 AUTH = (os.getenv("BIRDCAM_USER"), os.getenv("BIRDCAM_PASS"))
@@ -46,6 +49,11 @@ def main():
     image_process.start()
     bird_boxes = []
 
+    # motion tracking
+    back_sub = cv2.createBackgroundSubtractorMOG2(history=700, 
+        varThreshold=25, detectShadows=True)
+    kernel = np.ones((30,30),np.uint8)
+
     # Initialize pygame
     pygame.init()
     pygame.font.init()
@@ -56,6 +64,7 @@ def main():
     display = pygame.display.set_mode(display_size)#, pygame.NOFRAME)
     pygame.display.set_caption('Bird Cam Controls')
     keys = {k:pygame.__dict__[k] for k in pygame.__dict__ if k[0:2] == "K_"}
+    click_point = None
 
     # joystick
     joystick = None
@@ -91,6 +100,8 @@ def main():
     ai_active = True
     ai_info = myfont.render(f'AI {"Active" if ai_active else  "Inactive"}', False, white)
     processing_image = False
+    box_timer = time.time()
+    GOOD_BIRD = myfont.render(f'good bird', False, black)
 
     set_name("birdcam")
     while True:
@@ -102,10 +113,13 @@ def main():
                     if box:
                         print(f"DETECTED: {box}")
                         bird_boxes = box
+                        box_timer = time.time() + 15
                     processing_image = False
             else:
-                image_queue.put(get_snapshot(high_quality=True))
+                snapshot = get_snapshot(high_quality=True)
+                image_queue.put(snapshot)
                 processing_image = True
+
 
         # Get joystick axes
         if joystick:
@@ -134,9 +148,9 @@ def main():
                     ai_active = not ai_active
                     ai_info = myfont.render(f'AI {"Active" if ai_active else "Inactive"}', False, white)
                 elif event.key == pygame.K_EQUALS:
-                    send_command('zoomin', 0)
+                    send_command('zoomin', 50)
                 elif event.key == pygame.K_MINUS:
-                    send_command('zoomout', 0)
+                    send_command('zoomout', 50)
                 elif event.key == pygame.K_RIGHTBRACKET:
                     send_command('focusin', 50)
                 elif event.key == pygame.K_LEFTBRACKET:
@@ -171,10 +185,12 @@ def main():
                     vertical = 0
                 elif event.key in (pygame.K_LSHIFT, pygame.K_LCTRL):
                     speed_modifier = 0.1
-                send_command('stop')
+                if event.key in (pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET, pygame.K_EQUALS, pygame.K_MINUS):
+                    send_command('stop')
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 pos = event.pos
+                click_point = pos
                     
             elif event.type == pygame.JOYBUTTONDOWN:
                 if joystick.get_button(ZOOM_IN):
@@ -236,12 +252,62 @@ def main():
         last_preset = preset
         last_speed = speed_modifier
 
+
+
+
+
+
+
+
         # Display the latest image
         raw_snapshot = get_snapshot()
+        """
+        frame = yolo_all.load_image(raw_snapshot)
+
+
+        # Use every frame to calculate the foreground mask and update
+        # the background
+        fg_mask = back_sub.apply(frame)
+
+
+        # Close dark gaps in foreground object using closing
+        fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_CLOSE, kernel)
+ 
+        # Remove salt and pepper noise with a median filter
+        fg_mask = cv2.medianBlur(fg_mask, 5) 
+        fg_mask = cv2.erode(fg_mask,kernel,iterations = 3)
+        cv2.imshow('mask', fg_mask)
+
+        # Threshold the image to make it either black or white
+        _, fg_mask = cv2.threshold(fg_mask,127,255,cv2.THRESH_BINARY)
+ 
+        # Find the index of the largest contour and draw bounding box
+        fg_mask_bb = fg_mask
+        contours, hierarchy = cv2.findContours(fg_mask_bb,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)[-2:]
+        areas = [cv2.contourArea(c) for c in contours]
+ 
+        # If there are no countours
+        if len(areas) > 0:
+            for max_index in range(len(areas)):
+     
+                # Draw the bounding box
+                cnt = contours[max_index]
+                x,y,w,h = cv2.boundingRect(cnt)
+                cv2.rectangle(frame,(x,y),(x+w,y+h),(0,255,0),3)
+            
+
+        is_success, buffer = cv2.imencode(".jpg", frame) # io.BytesIO(raw_snapshot)
+        image = pygame.image.load(io.BytesIO(buffer))
+        
+        """
         image = pygame.image.load(io.BytesIO(raw_snapshot))
         image = pygame.transform.scale(image, display_size)
         display.blit(image, (0,0))
-        
+
+
+
+
+
         # Display control information
         if show_ui:
             pygame.draw.rect(display,black,(5,30,240,150))
@@ -250,10 +316,6 @@ def main():
             horizontal_info = myfont.render(f'H {hspeed:.3f}', False, white)
             vertical_info = myfont.render(f'V {vspeed:.3f}', False, white)
             speed_info = myfont.render(f'S {speed_modifier:.3f}', False, white)
-            for box in bird_boxes:
-                x1,y1,x2,y2, label, confidence = box
-                rect = (x1*display_size[0], y1*display_size[1], (x2-x1)*display_size[0], (y2-y1)*display_size[1])
-                pygame.draw.rect(display, black, rect, width=2)
      
             display.blit(horizontal_info, (5,30))
             display.blit(vertical_info, (5,60))
@@ -261,13 +323,26 @@ def main():
             display.blit(ir_info, (5,120))
             display.blit(ai_info, (5,150))
 
+            if click_point:
+                pygame.draw.circle(display, (255,0,0), click_point, 3, 3)
+                
+            for box in bird_boxes:
+                x1,y1,x2,y2, label, confidence = box
+                scale = (display_size[0]/hq_size[0], display_size[1]/hq_size[1])
+                rect = (x1*scale[0], y1*scale[1], (x2-x1)*scale[0], (y2-y1)*scale[1])
+                #pygame.draw.rect(display, black, rect, width=2)
+                if label == "bird":
+                    display.blit(GOOD_BIRD, ((rect[0]+rect[2])/2, (rect[1]+rect[3])/2))
+            if bird_boxes and time.time() > box_timer:
+                bird_boxes = []
         # Update the screen
         pygame.display.update()
         display.fill(black)
 
 def halt(image_process):
-    image_process.terminate()
-    image_process.join()
+    if image_process:
+        image_process.terminate()
+        image_process.join()
     exit()
 
 def send_command(name, speed=1):

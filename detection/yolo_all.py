@@ -26,7 +26,7 @@ LABELS = ["person", "bicycle", "car", "motorbike", "aeroplane", "bus", "train", 
               "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink", "refrigerator", \
               "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush"]
 net_h, net_w = 416, 416
-obj_thresh, bird_thresh, nms_thresh = 0.95, 0.5, 0.45
+obj_thresh, bird_thresh, nms_thresh = 0.995, 0.6, 0.45
 
 class WeightReader:
     def __init__(self, weight_file):
@@ -455,8 +455,48 @@ def image_process(input_queue, output_queue):
 
         # draw boxes and save
         if data:
-            draw_boxes(image, boxes) 
+            #draw_boxes(image, boxes) 
             cv2.imwrite("images/" + received, (image).astype('uint8')) 
+            save_xml(boxes, received)
+
+def save_xml(boxes, filename):
+    path = f"D:\\Programming\\birdcam\\images\\{filename}"
+    object_template = lambda box, label: f"""<object>
+        <name>{label}</name>
+        <pose>Unspecified</pose>
+        <truncated>0</truncated>
+        <difficult>0</difficult>
+        <bndbox>
+            <xmin>{box.xmin}</xmin>
+            <ymin>{box.ymin}</ymin>
+            <xmax>{box.xmax}</xmax>
+            <ymax>{box.ymax}</ymax>
+        </bndbox>
+    </object>"""
+    objects = ""
+    for box in boxes:
+        for i in range(len(LABELS)):
+            if box.classes[i] > obj_thresh or LABELS[i] == "bird" and box.classes[i] > bird_thresh:
+                objects += object_template(box, LABELS[i]) + "\n"
+                
+    output = f"""<annotation>
+        <folder>images</folder>
+        <filename>{filename}</filename>
+        <path>{path}</path>
+        <source>
+            <database>Unknown</database>
+        </source>
+        <size>
+            <width>2560</width>
+            <height>1440</height>
+            <depth>3</depth>
+        </size>
+        <segmented>0</segmented>
+        {objects}
+    </annotation>"""
+
+    with open(path.replace(".jpg", ".xml"), "w") as f:
+        f.write(output)
 
 def main():
     argparser = argparse.ArgumentParser(

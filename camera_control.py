@@ -104,6 +104,8 @@ def main():
     GOOD_BIRD = myfont.render(f'good bird', False, black)
 
     set_name("birdcam")
+    set_time()
+
     while True:
         # Send images / receive bounds
         if ai_active:
@@ -393,6 +395,11 @@ def get_infrared():
 
 def set_name(name):
     request = f"http://{IP_ADDRESS}/web/cgi-bin/hi3510/param.cgi?cmd=setoverlayattr&-region=1&-show=1&-name={quote(name)}"
+    return requests.get(request, auth=AUTH)
+
+def set_time():
+    current_time = datetime.now().strftime("%Y.%m.%d.%H.%M.%S")
+    request = f"http://{IP_ADDRESS}/web/cgi-bin/hi3510/param.cgi?cmd=setservertime&-time={current_time}"
     return requests.get(request, auth=AUTH)
 
 def load_config():

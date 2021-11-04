@@ -1,6 +1,9 @@
 # birdcam
 Real-time bird detection, classification, and tracking for an IP PTZ camera
 
+![20210404-150535](https://user-images.githubusercontent.com/5778014/140254110-1e4bcde0-f892-4d0e-9436-c74edd74f5e1.jpg)
+
+
 ## Usage
 First, set the environment variables `BIRDCAM_USER` and `BIRDCAM_PASS` to your IP Camera's web login credentials. 
 The web CGI uses HTTP Basic Authentication, meaning **your credentials will be sent unencrypted**.

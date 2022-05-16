@@ -460,7 +460,7 @@ def image_process(input_queue, output_queue):
             save_xml(boxes, received)
 
 def save_xml(boxes, filename):
-    path = f"D:\\Programming\\birdcam\\images\\{filename}"
+    path = f"/home/shwam/Programming/birdcam/images/{filename}"
     object_template = lambda box, label: f"""<object>
         <name>{label}</name>
         <pose>Unspecified</pose>

@@ -4,6 +4,8 @@ import io
 import os
 from datetime import datetime
 import random
+import subprocess
+import itertools
 import time
 from urllib.parse import quote
 import multiprocessing, threading
@@ -18,6 +20,7 @@ IP_ADDRESS = "192.168.1.115"
 AUTH = (os.getenv("BIRDCAM_USER"), os.getenv("BIRDCAM_PASS"))
 if None in AUTH:
     print("Did not detect environment variables BIRDCAM_USER and BIRDCAM_PASS")
+    AUTH = input("USER:"), input("PASS:")
 commands = ('left', 'right', 'up', 'down', 'home', 'stop', 'zoomin', 'zoomout', 'focusin', 'focusout', 'hscan', 'vscan')
 presets = ((0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1), (-1, 0), (-1, 1))
 infrared = "open", "close", "auto"
@@ -40,13 +43,15 @@ SPEED_THRESHOLD = 0.001
 IR_TOGGLE = 6
 
 client = rtsp.Client(rtsp_server_uri = f'rtsp://{IP_ADDRESS}:554/1')
-
+  
+spinner = itertools.cycle('◴◴◷◷◶◶◵◵')
 def main():
     # Initialize image processing
     image_queue = multiprocessing.Queue()
     boxes = multiprocessing.Queue()
     image_process = multiprocessing.Process(target = yolo_all.image_process, args=[image_queue, boxes])
     image_process.start()
+    processing_timeout = time.time() + 60
     bird_boxes = []
 
     # motion tracking
@@ -58,10 +63,13 @@ def main():
     pygame.init()
     pygame.font.init()
     myfont = pygame.font.SysFont('Consolas', 30)
-    display_size = 800,448
+    fullscreen = False
+    fullscreen_size = 1920,1080
+    windowed_size = 800,448
+    display_size=windowed_size
     image_size = 800, 448
     hq_size = 2560,1440
-    display = pygame.display.set_mode(display_size)#, pygame.NOFRAME)
+    display = pygame.display.set_mode(display_size, pygame.RESIZABLE + pygame.DOUBLEBUF, 32)
     pygame.display.set_caption('Bird Cam Controls')
     keys = {k:pygame.__dict__[k] for k in pygame.__dict__ if k[0:2] == "K_"}
     click_point = None
@@ -82,6 +90,7 @@ def main():
     preset = (0, 0)
     last_preset = (0, 0)
     snapshot_held = False
+    K_LGUI = False
 
     horizontal = vertical = 0
     hspeed = vspeed = 0
@@ -98,15 +107,16 @@ def main():
     ir_toggling = False
     ir_info = myfont.render(f'IR {infrared[infrared_index]}', False, white)
     ai_active = True
-    ai_info = myfont.render(f'AI {"Active" if ai_active else  "Inactive"}', False, white)
     processing_image = False
     box_timer = time.time()
     GOOD_BIRD = myfont.render(f'good bird', False, black)
+    last_chirp = time.time()
 
     set_name("birdcam")
     set_time()
 
     while True:
+        display_size = pygame.display.get_surface().get_size()
         # Send images / receive bounds
         if ai_active:
             if processing_image:
@@ -118,9 +128,9 @@ def main():
                         box_timer = time.time() + 15
                     processing_image = False
             else:
-                snapshot = get_snapshot(high_quality=True)
-                image_queue.put(snapshot)
+                queue_snapshot(image_queue)
                 processing_image = True
+                processing_timeout = time.time() + 30
 
 
         # Get joystick axes
@@ -136,8 +146,14 @@ def main():
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_q:
                     halt(image_process)
-                elif event.key in range(pygame.K_0, pygame.K_9):
-                    ctrl_preset(event.key - pygame.K_0)
+                if event.key == pygame.K_LGUI:
+                    K_LGUI = True
+                elif event.key in range(pygame.K_1, pygame.K_9 + 1) and not K_LGUI:
+                    if speed_modifier != 0.01:
+                        ctrl_preset(event.key - pygame.K_0)
+                    else:
+                        set_preset(event.key - pygame.K_0)
+                        print(f"Set current frame as hotkey {event.key - pygame.K_0}")
                 elif event.key == pygame.K_LEFT:
                     horizontal = -1
                 elif event.key == pygame.K_RIGHT:
@@ -147,8 +163,7 @@ def main():
                 elif event.key == pygame.K_DOWN:
                     vertical = -1
                 elif event.key == pygame.K_a:
-                    ai_active = not ai_active
-                    ai_info = myfont.render(f'AI {"Active" if ai_active else "Inactive"}', False, white)
+                    ai_active = not ai_active 
                 elif event.key == pygame.K_EQUALS:
                     send_command('zoomin', 50)
                 elif event.key == pygame.K_MINUS:
@@ -171,12 +186,16 @@ def main():
                     speed_modifier = 1
                 elif event.key == pygame.K_LCTRL:
                     speed_modifier = 0.01
+                elif event.key == pygame.K_F11:
+                    pass
                 else:
                     for k in keys:
                         if keys[k] == event.key:
                             print(k)
                             break
             elif event.type == pygame.KEYUP:
+                if event.key == pygame.K_LGUI:
+                    K_LGUI = False
                 if event.key == pygame.K_LEFT and horizontal == -1:
                     horizontal = 0
                 elif event.key == pygame.K_RIGHT and horizontal == 1:
@@ -187,6 +206,10 @@ def main():
                     vertical = 0
                 elif event.key in (pygame.K_LSHIFT, pygame.K_LCTRL):
                     speed_modifier = 0.1
+                elif event.key == pygame.K_F11:
+                    fullscreen = not fullscreen
+                    display_size = fullscreen_size if fullscreen else windowed_size
+                    display = pygame.display.set_mode(display_size, pygame.FULLSCREEN if fullscreen else pygame.RESIZABLE)
                 if event.key in (pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET, pygame.K_EQUALS, pygame.K_MINUS):
                     send_command('stop')
 
@@ -312,12 +335,18 @@ def main():
 
         # Display control information
         if show_ui:
-            pygame.draw.rect(display,black,(5,30,240,150))
+            #pygame.draw.rect(display,black,(5,30,240,150))
+            overlay = pygame.Surface((240,150), pygame.SRCALPHA)   # per-pixel alpha
+            overlay.fill((0,0,0,128))                         # notice the alpha value in the color
+            display.blit(overlay, (5,30))
+            
+            # center cursor
             pygame.draw.circle(display,black,((display_size[0]-10)/2,(display_size[1]-10)/2), 10, 3)
 
             horizontal_info = myfont.render(f'H {hspeed:.3f}', False, white)
             vertical_info = myfont.render(f'V {vspeed:.3f}', False, white)
             speed_info = myfont.render(f'S {speed_modifier:.3f}', False, white)
+            ai_info = myfont.render(f'AI {"Failed" if time.time() > processing_timeout and ai_active and processing_image else "Active " + next(spinner) if processing_image and ai_active else "Active ○" if ai_active else "Inactive"}', False, white)
      
             display.blit(horizontal_info, (5,30))
             display.blit(vertical_info, (5,60))
@@ -335,6 +364,9 @@ def main():
                 #pygame.draw.rect(display, black, rect, width=2)
                 if label == "bird":
                     display.blit(GOOD_BIRD, ((rect[0]+rect[2])/2, (rect[1]+rect[3])/2))
+                    if time.time() > last_chirp:
+                        chirp()
+                    last_chirp = time.time() + 360
             if bird_boxes and time.time() > box_timer:
                 bird_boxes = []
         # Update the screen
@@ -346,6 +378,11 @@ def halt(image_process):
         image_process.terminate()
         image_process.join()
     exit()
+
+def chirp():
+    subprocess.Popen(['ffplay', 'chirp.wav', '-nodisp', '-autoexit'],
+                         stdout=subprocess.PIPE, 
+                         stderr=subprocess.PIPE)
 
 def send_command(name, speed=1):
     if speed > SPEED_RANGE[1] - 1:
@@ -362,10 +399,16 @@ def set_preset(name):
     request = f"http://{IP_ADDRESS}/cgi-bin/hi3510/preset.cgi?-act=set&-status=1&-number={name}"
     return requests.get(request, auth=AUTH)
 
-def get_snapshot(high_quality=False):
+def get_snapshot(high_quality=False, image_queue=None):
     request = f"http://{IP_ADDRESS}/tmpfs/{'snap' if high_quality else 'auto'}.jpg"
     response = requests.get(request, auth=AUTH)
-    return response._content
+    if image_queue != None:
+        image_queue.put(response._content)
+    else:
+        return response._content
+
+def queue_snapshot(image_queue, high_quality=True):
+    threading.Thread(target=get_snapshot, args=[high_quality, image_queue]).start()
 
 def save_hqsnapshot(filename):
     content = get_snapshot(high_quality=True)

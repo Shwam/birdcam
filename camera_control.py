@@ -16,14 +16,12 @@ import cv2
 import pygame
 import numpy as np
 
-IP_ADDRESS = "192.168.1.115"
-AUTH = (os.getenv("BIRDCAM_USER"), os.getenv("BIRDCAM_PASS"))
-if None in AUTH:
-    print("Did not detect environment variables BIRDCAM_USER and BIRDCAM_PASS")
-    AUTH = input("USER:"), input("PASS:")
+from auth import IP_ADDRESS, AUTH
+
 commands = ('left', 'right', 'up', 'down', 'home', 'stop', 'zoomin', 'zoomout', 'focusin', 'focusout', 'hscan', 'vscan')
 presets = ((0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1), (-1, 0), (-1, 1))
 infrared = "open", "close", "auto"
+infrared_symbols = "●", "○", "◐"
 black = (0,0,0)
 white = (255,255,255)
 
@@ -43,8 +41,9 @@ SPEED_THRESHOLD = 0.001
 IR_TOGGLE = 6
 
 client = rtsp.Client(rtsp_server_uri = f'rtsp://{IP_ADDRESS}:554/1')
-  
+
 spinner = itertools.cycle('◴◴◷◷◶◶◵◵')
+
 def main():
     # Initialize image processing
     image_queue = multiprocessing.Queue()
@@ -55,9 +54,9 @@ def main():
     bird_boxes = []
 
     # motion tracking
-    back_sub = cv2.createBackgroundSubtractorMOG2(history=700, 
-        varThreshold=25, detectShadows=True)
-    kernel = np.ones((30,30),np.uint8)
+    #back_sub = cv2.createBackgroundSubtractorMOG2(history=700, 
+    #    varThreshold=25, detectShadows=True)
+    #kernel = np.ones((30,30),np.uint8)
 
     # Initialize pygame
     pygame.init()
@@ -101,16 +100,16 @@ def main():
 
     # Information display
     show_ui = True
-    horizontal_info = myfont.render('H 0 0', False, white)
-    vertical_info = myfont.render('V 0 0', False, white)
     infrared_index = infrared.index(get_infrared())
     ir_toggling = False
-    ir_info = myfont.render(f'IR {infrared[infrared_index]}', False, white)
+    ir_info = myfont.render(f'IR {infrared_symbols[infrared_index]}', False, white)
     ai_active = True
     processing_image = False
     box_timer = time.time()
     GOOD_BIRD = myfont.render(f'good bird', False, black)
     last_chirp = time.time()
+    realtime = False
+    bird_sightings = []
 
     set_name("birdcam")
     set_time()
@@ -126,6 +125,16 @@ def main():
                         print(f"DETECTED: {box}")
                         bird_boxes = box
                         box_timer = time.time() + 15
+                        for b in box:
+                            x1,y1,x2,y2, label, confidence = b
+                            if label == "bird":
+                                t = datetime.now().strftime("%Y%m%d%H%M%S")
+                                with open("sightings.txt", "a") as f:
+                                    f.write(t + "\n")
+                                if time.time() > last_chirp:
+                                    chirp()
+                                last_chirp = time.time() + 360
+
                     processing_image = False
             else:
                 queue_snapshot(image_queue)
@@ -164,6 +173,8 @@ def main():
                     vertical = -1
                 elif event.key == pygame.K_a:
                     ai_active = not ai_active 
+                elif event.key == pygame.K_r:
+                    realtime = not realtime
                 elif event.key == pygame.K_EQUALS:
                     send_command('zoomin', 50)
                 elif event.key == pygame.K_MINUS:
@@ -178,7 +189,7 @@ def main():
                     take_snapshot(client)
                 elif event.key == pygame.K_i:
                     infrared_index = (infrared_index + 1) % 3
-                    ir_info = myfont.render(f'IR {infrared[infrared_index]}'.replace("open", "on").replace("close", "off"), False, white)
+                    ir_info = myfont.render(f'IR {infrared_symbols[infrared_index]}', False, white)
                     toggle_infrared(infrared_index)
                 elif event.key == pygame.K_u:
                     show_ui = not show_ui
@@ -236,7 +247,7 @@ def main():
                     if not ir_toggling:
                         ir_toggling= True
                         infrared_index = (infrared_index + 1) % 3
-                        ir_info = myfont.render(f'IR {infrared[infrared_index]}'.replace("open", "on").replace("close", "off"), False, white)
+                        ir_info = myfont.render(f'IR {infrared_symbols[infrared_index]}', False, white)
                         toggle_infrared(infrared_index) 
 
             elif event.type == pygame.JOYBUTTONUP:
@@ -285,7 +296,7 @@ def main():
 
 
         # Display the latest image
-        raw_snapshot = get_snapshot()
+
         """
         frame = yolo_all.load_image(raw_snapshot)
 
@@ -325,7 +336,18 @@ def main():
         image = pygame.image.load(io.BytesIO(buffer))
         
         """
-        image = pygame.image.load(io.BytesIO(raw_snapshot))
+        if not realtime and client:
+            image = client.read()
+            # Calculate mode, size and data
+            mode = image.mode
+            size = image.size
+            data = image.tobytes()
+              
+            # Convert PIL image to pygame surface image
+            image = pygame.image.fromstring(data, size, mode)
+        else:
+            raw_snapshot = get_snapshot()
+            image = pygame.image.load(io.BytesIO(raw_snapshot))
         image = pygame.transform.scale(image, display_size)
         display.blit(image, (0,0))
 
@@ -335,28 +357,22 @@ def main():
 
         # Display control information
         if show_ui:
-            #pygame.draw.rect(display,black,(5,30,240,150))
-            overlay = pygame.Surface((240,150), pygame.SRCALPHA)   # per-pixel alpha
-            overlay.fill((0,0,0,128))                         # notice the alpha value in the color
+            # Overlay
+            overlay = pygame.Surface((100,60), pygame.SRCALPHA) 
+            overlay.fill((0,0,0))
+            
+            ai_info = myfont.render(f'AI {"◙" if time.time() > processing_timeout and ai_active and processing_image else next(spinner) if processing_image and ai_active else "●" if ai_active else "○"}', False, white)
+     
+            overlay.blit(ir_info, (0,0))
+            overlay.blit(ai_info, (0,30))
+            overlay.set_alpha(110)
             display.blit(overlay, (5,30))
             
             # center cursor
             pygame.draw.circle(display,black,((display_size[0]-10)/2,(display_size[1]-10)/2), 10, 3)
 
-            horizontal_info = myfont.render(f'H {hspeed:.3f}', False, white)
-            vertical_info = myfont.render(f'V {vspeed:.3f}', False, white)
-            speed_info = myfont.render(f'S {speed_modifier:.3f}', False, white)
-            ai_info = myfont.render(f'AI {"Failed" if time.time() > processing_timeout and ai_active and processing_image else "Active " + next(spinner) if processing_image and ai_active else "Active ○" if ai_active else "Inactive"}', False, white)
-     
-            display.blit(horizontal_info, (5,30))
-            display.blit(vertical_info, (5,60))
-            display.blit(speed_info, (5,90))
-            display.blit(ir_info, (5,120))
-            display.blit(ai_info, (5,150))
-
             if click_point:
                 pygame.draw.circle(display, (255,0,0), click_point, 3, 3)
-                
             for box in bird_boxes:
                 x1,y1,x2,y2, label, confidence = box
                 scale = (display_size[0]/hq_size[0], display_size[1]/hq_size[1])
@@ -364,9 +380,7 @@ def main():
                 #pygame.draw.rect(display, black, rect, width=2)
                 if label == "bird":
                     display.blit(GOOD_BIRD, ((rect[0]+rect[2])/2, (rect[1]+rect[3])/2))
-                    if time.time() > last_chirp:
-                        chirp()
-                    last_chirp = time.time() + 360
+            
             if bird_boxes and time.time() > box_timer:
                 bird_boxes = []
         # Update the screen
@@ -416,12 +430,12 @@ def save_hqsnapshot(filename):
         f.write(content)
 
 def save_rtsp_snapshot(rtsp_client, filename):
-    pygame.time.wait(500) # wait for the video feed to catch up
+    #pygame.time.wait(500) # wait for the video feed to catch up
     snapshot = rtsp_client.read()
     snapshot.save(filename)
 
 def take_snapshot(rtsp_client=None):
-    filename = datetime.now().strftime("%Y%m%d-%H%M%S.jpg")
+    filename = "snapshots/" + datetime.now().strftime("%Y%m%d-%H%M%S.jpg")
 
     if rtsp_client:
         threading.Thread(target=save_rtsp_snapshot, args=[rtsp_client, filename]).start()

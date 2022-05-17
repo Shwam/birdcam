@@ -131,6 +131,7 @@ dmypy.json
 # YOLO weights
 detection/yolov3.weights
 
-# Saved images and labels
+# Saved images, videos, and labels
 *.jpg
 *.xml
+*.265

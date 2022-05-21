@@ -42,7 +42,7 @@ IR_TOGGLE = 6
 
 client = rtsp.Client(rtsp_server_uri = f'rtsp://{IP_ADDRESS}:554/1')
 
-spinner = itertools.cycle('◴◴◷◷◶◶◵◵')
+spinner = itertools.cycle('◴'*3 + '◷'*3 + '◶'*3 + '◵'*3)
 
 def main():
     # Initialize image processing
@@ -97,7 +97,7 @@ def main():
 
     alternate = False
     alternate_timer = time.time() + 0.25
-
+    
     # Information display
     show_ui = True
     infrared_index = infrared.index(get_infrared())
@@ -113,6 +113,14 @@ def main():
 
     set_name("birdcam")
     set_time()
+    
+    zoom = False
+    shiftrtsp_timer = None
+    def shift_rtsp(rt, timer):
+        if rt == False or timer != None: 
+            timer = time.time() + 2
+            rt = True
+        return (rt, timer)
 
     while True:
         display_size = pygame.display.get_surface().get_size()
@@ -175,14 +183,19 @@ def main():
                     ai_active = not ai_active 
                 elif event.key == pygame.K_r:
                     realtime = not realtime
+                    shiftrtsp_timer = None
                 elif event.key == pygame.K_EQUALS:
                     send_command('zoomin', 50)
+                    zoom = True
                 elif event.key == pygame.K_MINUS:
                     send_command('zoomout', 50)
+                    zoom = True
                 elif event.key == pygame.K_RIGHTBRACKET:
                     send_command('focusin', 50)
+                    zoom = True
                 elif event.key == pygame.K_LEFTBRACKET:
                     send_command('focusout', 50)
+                    zoom = True
                 elif event.key == pygame.K_SPACE:
                     display.fill(white)
                     pygame.display.update()
@@ -223,6 +236,7 @@ def main():
                     display = pygame.display.set_mode(display_size, pygame.FULLSCREEN if fullscreen else pygame.RESIZABLE)
                 if event.key in (pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET, pygame.K_EQUALS, pygame.K_MINUS):
                     send_command('stop')
+                    zoom = False
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 pos = event.pos
@@ -278,7 +292,8 @@ def main():
             send_command('down' if vertical < 0 else 'up', round(vspeed * (SPEED_RANGE[1]-SPEED_RANGE[0]) + SPEED_RANGE[0]))
         elif hspeed > SPEED_THRESHOLD:
             send_command('left' if horizontal < 0 else 'right', round(hspeed * (SPEED_RANGE[1]-SPEED_RANGE[0]) + SPEED_RANGE[0]))
-
+        if zoom or hspeed > SPEED_THRESHOLD or vspeed > SPEED_THRESHOLD:
+            realtime, shiftrtsp_timer = shift_rtsp(realtime, shiftrtsp_timer)
         if joystick:
             preset = joystick.get_hat(PRESET_HAT)
             if preset != (0, 0) and preset != last_preset:
@@ -288,12 +303,9 @@ def main():
         last_preset = preset
         last_speed = speed_modifier
 
-
-
-
-
-
-
+        if shiftrtsp_timer != None and time.time() > shiftrtsp_timer:
+            shiftrtsp_timer = None
+            realtime = False
 
         # Display the latest image
 
@@ -467,6 +479,10 @@ def load_config():
         k, v = line[4:].split("=")
         config[k] = v
     return config
+
+def reboot():
+    request = f"http://{IP_ADDRESS}/cgi-bin/hi3510/param.cgi?cmd=sysreboot"
+    return requests.get(request, auth=AUTH)
 
 if __name__ == "__main__":
     main()

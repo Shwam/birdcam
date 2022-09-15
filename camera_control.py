@@ -18,6 +18,12 @@ import numpy as np
 
 from auth import IP_ADDRESS, AUTH
 
+
+#############
+#########
+
+
+
 commands = ('left', 'right', 'up', 'down', 'home', 'stop', 'zoomin', 'zoomout', 'focusin', 'focusout', 'hscan', 'vscan')
 presets = ((0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1), (-1, 0), (-1, 1))
 infrared = "open", "close", "auto"
@@ -52,11 +58,6 @@ def main():
     image_process.start()
     processing_timeout = time.time() + 60
     bird_boxes = []
-
-    # motion tracking
-    #back_sub = cv2.createBackgroundSubtractorMOG2(history=700, 
-    #    varThreshold=25, detectShadows=True)
-    #kernel = np.ones((30,30),np.uint8)
 
     # Initialize pygame
     pygame.init()
@@ -311,45 +312,6 @@ def main():
 
         # Display the latest image
 
-        """
-        frame = yolo_all.load_image(raw_snapshot)
-
-
-        # Use every frame to calculate the foreground mask and update
-        # the background
-        fg_mask = back_sub.apply(frame)
-
-
-        # Close dark gaps in foreground object using closing
-        fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_CLOSE, kernel)
- 
-        # Remove salt and pepper noise with a median filter
-        fg_mask = cv2.medianBlur(fg_mask, 5) 
-        fg_mask = cv2.erode(fg_mask,kernel,iterations = 3)
-        cv2.imshow('mask', fg_mask)
-
-        # Threshold the image to make it either black or white
-        _, fg_mask = cv2.threshold(fg_mask,127,255,cv2.THRESH_BINARY)
- 
-        # Find the index of the largest contour and draw bounding box
-        fg_mask_bb = fg_mask
-        contours, hierarchy = cv2.findContours(fg_mask_bb,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)[-2:]
-        areas = [cv2.contourArea(c) for c in contours]
- 
-        # If there are no countours
-        if len(areas) > 0:
-            for max_index in range(len(areas)):
-     
-                # Draw the bounding box
-                cnt = contours[max_index]
-                x,y,w,h = cv2.boundingRect(cnt)
-                cv2.rectangle(frame,(x,y),(x+w,y+h),(0,255,0),3)
-            
-
-        is_success, buffer = cv2.imencode(".jpg", frame) # io.BytesIO(raw_snapshot)
-        image = pygame.image.load(io.BytesIO(buffer))
-        
-        """
         if not realtime and client:
             image = client.read()
             # Calculate mode, size and data
@@ -364,9 +326,6 @@ def main():
             image = pygame.image.load(io.BytesIO(raw_snapshot))
         image = pygame.transform.scale(image, display_size)
         display.blit(image, (0,0))
-
-
-
 
 
         # Display control information
@@ -399,7 +358,6 @@ def main():
                 if label == "bird":
                     #display.blit(GOOD_BIRD, ((rect[0]+rect[2])/2, (rect[1]+rect[3])/2))
                     display.blit(GOOD_BIRD, (rect[0], rect[1]))
-                print((x,y,w,h), " * ", scale, "->", rect) 
             
             if bird_boxes and time.time() > box_timer:
                 bird_boxes = []

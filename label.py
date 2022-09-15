@@ -50,10 +50,11 @@ def main():
     hotkeys = {pygame.__dict__[f"K_{k}"]:hotkey_letters[k] for k in hotkey_letters}
     
     click_point = None
+    auto_skip = True
 
     # load images
     image_path = "images/"
-    files = reversed(sorted(os.listdir(image_path)))
+    files = os.listdir(image_path)
     files = [file[:-4] for file in files if file[-4:] == ".xml"]
 
     # load bird species
@@ -66,18 +67,22 @@ def main():
     file_name = files[current_file]
     tree = ET.parse(f"images/{file_name}.xml") 
     bird_boxes = get_boxes(tree)
-    # seek to first unlabeled bird
-    while bird_boxes[0][-1] != "bird":
-        current_file += 1
-        file_name = files[current_file]
-        tree = ET.parse(f"images/{file_name}.xml") 
-        bird_boxes = get_boxes(tree)
-    print(f"Skipped past {current_file} labeled images")
     while True:
         
         display_size = pygame.display.get_surface().get_size()
         image_path = f"images/{file_name}.jpg"
         xml_path = f"images/{file_name}.xml"
+        
+        # seek to first unlabeled bird
+        if auto_skip:
+            while bird_boxes[current_box][-1] != "bird":
+                current_box +=1
+                if current_box >= len(bird_boxes):
+                    current_file += 1
+                    current_box = 0
+                    file_name = files[current_file]
+                    tree = ET.parse(f"images/{file_name}.xml") 
+                    bird_boxes = get_boxes(tree)
 
         # Get mouse/keyboard events
         for event in pygame.event.get():
@@ -89,7 +94,10 @@ def main():
                 elif event.key in range(pygame.K_1, pygame.K_9 + 1):
                     relabel(tree, file_name, current_box, bird_species[event.key - pygame.K_0 - 1])
                     bird_boxes = get_boxes(tree)
+                elif event.key == pygame.K_s:
+                    auto_skip = not auto_skip
                 elif event.key == pygame.K_LEFT:
+                    auto_skip = False
                     current_box = current_box - 1
                     if current_box < 0:
                         current_file -= 1

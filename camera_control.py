@@ -10,7 +10,7 @@ import time
 from urllib.parse import quote
 import multiprocessing, threading
 
-from detection import yolo_all
+import detect
 import rtsp
 import cv2
 import pygame
@@ -48,7 +48,7 @@ def main():
     # Initialize image processing
     image_queue = multiprocessing.Queue()
     boxes = multiprocessing.Queue()
-    image_process = multiprocessing.Process(target = yolo_all.image_process, args=[image_queue, boxes])
+    image_process = multiprocessing.Process(target = detect.image_process, args=[image_queue, boxes])
     image_process.start()
     processing_timeout = time.time() + 60
     bird_boxes = []
@@ -134,7 +134,9 @@ def main():
                         bird_boxes = box
                         box_timer = time.time() + 15
                         for b in box:
-                            x1,y1,x2,y2, label, confidence = b
+                            #x1,y1,x2,y2, label, confidence = b
+                            label, confidence, rect = b
+                            x1,y1,x2,y2 = rect
                             if label == "bird":
                                 t = datetime.now().strftime("%Y%m%d%H%M%S")
                                 with open("sightings.txt", "a") as f:
@@ -386,12 +388,18 @@ def main():
             if click_point:
                 pygame.draw.circle(display, (255,0,0), click_point, 3, 3)
             for box in bird_boxes:
-                x1,y1,x2,y2, label, confidence = box
-                scale = (display_size[0]/hq_size[0], display_size[1]/hq_size[1])
-                rect = (x1*scale[0], y1*scale[1], (x2-x1)*scale[0], (y2-y1)*scale[1])
-                #pygame.draw.rect(display, black, rect, width=2)
+                #x1,y1,x2,y2, label, confidence = box
+                label, confidence, rect = box
+                x,y,w,h = rect
+                #scale = (display_size[0]/hq_size[0], display_size[1]/hq_size[1])
+                scale = (display_size[0], display_size[1])
+                #rect = (x1*scale[0], y1*scale[1], (x2-x1)*scale[0], (y2-y1)*scale[1])
+                rect = ((x-w/2)*scale[0], (y-h/2)*scale[1], (w) * scale[0], (h)*scale[1])
+                pygame.draw.rect(display, black, rect, width=2)
                 if label == "bird":
-                    display.blit(GOOD_BIRD, ((rect[0]+rect[2])/2, (rect[1]+rect[3])/2))
+                    #display.blit(GOOD_BIRD, ((rect[0]+rect[2])/2, (rect[1]+rect[3])/2))
+                    display.blit(GOOD_BIRD, (rect[0], rect[1]))
+                print((x,y,w,h), " * ", scale, "->", rect) 
             
             if bird_boxes and time.time() > box_timer:
                 bird_boxes = []

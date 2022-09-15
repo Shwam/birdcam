@@ -53,7 +53,7 @@ def main():
 
     # load images
     image_path = "images/"
-    files = os.listdir(image_path)
+    files = reversed(sorted(os.listdir(image_path)))
     files = [file[:-4] for file in files if file[-4:] == ".xml"]
 
     # load bird species

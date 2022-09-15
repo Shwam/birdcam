@@ -2,7 +2,6 @@ from html.parser import HTMLParser
 import os.path
 import requests
 import datetime
-from moviepy.video.io.ffmpeg_tools import ffmpeg_extract_subclip
 import cv2
 import os
 import subprocess
@@ -23,18 +22,21 @@ class RecordParser(HTMLParser):
             if link[-4:] == ".265":
                 timestamp = link.split("/")[4].split(".")[0][1:]
                 date, start, end = timestamp.split("_")
-                if int(end) < 999999:
+                if int(end) < 999999: # ignore videos not finished recording
                     self.links.append((date + start, date + end, link))
 
 
  
 def list_records(ip_address, creds):
     records = []
+
+    # parse the sd card root directory
     request = f"http://{ip_address}/sd/"
     sd = (requests.get(request, auth=creds)._content.decode("utf8"))
     parser = SDParser()
     parser.feed(sd)
     for link in parser.links:
+        # parse subdirectory (contains videos)
         date = link.split("/")[2]
         request = f"http://{ip_address}/sd/{date}/record000/"
         response = (requests.get(request, auth=creds)._content.decode("utf8"))
@@ -44,6 +46,7 @@ def list_records(ip_address, creds):
     return records
 
 def download(ip_address, creds, link):
+    # downoad a video clip from its URL -> videos/ director
     filename = "videos/" + link.split("/")[-1]
     if os.path.exists(filename):
         print(f"{filename} already exists, skipping...")
@@ -55,8 +58,9 @@ def download(ip_address, creds, link):
     return filename
 
 def seek(start, end, records):
-    start = start[2:]
-    end = end[2:]
+    # returns URLS of videos overlapping time window
+    start = start.strftime('%y%m%d%H%M%S')
+    end = end.strftime('%y%m%d%H%M%S')
     urls = []
     found = False
     for record in records:
@@ -73,24 +77,34 @@ def seek(start, end, records):
     return urls
 
 def clip(start, end, ip_address, creds, records=None):
+    # downloads the necessary videos and extracts a clip from them based on the specified start and end times
     if not records:
         records = list_records(ip_address, creds)
-    
+     
     required_files = seek(start, end, records)
     print(f"Gathering {len(required_files)} file{'s' if len(required_files) != 1 else ''} for event {start}{end}")
     for file in required_files:
         video = download(ip_address, creds, file)
 
         # Edit the video down to the required regions
-        #video = "videos/P220517_103617_104623.265"
-        #start = "20220517103700"
-        #end = "20220517103800"
-        extract_frames(video, start, end)
+        video_start, video_end = video_times(video)
+        if start < video_start:
+            start = video_start
+        if end > video_end:
+            end = video_end
+        
+        clip_section(video, max(start, video_start), min(end, video_end))
+        # TODO: combine overlapping clips
     
-def extract_frames(path, start, end):
+def clip_section(path, start, end):
+    # creates a clip from a single video
     video = cv2.VideoCapture(path)
     f = path.split("/")
     output_dir = "/".join(f[0:-1]) + "/." + f[-1]
+    clip_path = f"clips/{start.strftime('%Y%m%d%H%M%S')}_{end.strftime('%Y%m%d%H%M%S')}.mp4"
+    
+    if os.path.exists(clip_path):
+        return
 
     # extract the frames
     if not os.path.exists(output_dir):
@@ -98,36 +112,33 @@ def extract_frames(path, start, end):
  
         command = ["ffmpeg", "-i", path, output_dir + "/output_%05d.jpg"]
 
-        split = subprocess.run(command)
-        
-    files = os.listdir(output_dir)
-    count = len(files)
+        split = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT) 
+
+    count = len(os.listdir(output_dir))
 
     # figure out which frames we need    
+    video_start, video_end = video_times(path) 
+    increment = (video_end - video_start) / count
+    fps = round(1000000 / increment.microseconds)
+    first_frame = round((start - video_start) / increment)
+    last_frame = round(first_frame + (end-start) / increment)
+    
+    # encode the video clip
+    encode_command = ["ffmpeg", "-r", f"{fps}", "-f", "image2", "-s", "2560x1440", "-start_number", f"{first_frame}", "-i", output_dir + "/output_%05d.jpg", "-vframes", f"{last_frame-first_frame}", "-vcodec", "libx264", "-crf", "25", "-pix_fmt", "yuv420p", clip_path]
+    clp = subprocess.run(encode_command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+
+def video_times(path):
     timestamp = path.split("_")
     date = timestamp[0].split("/")[-1][1:]
     video_start = timestamp[1]
     video_end = timestamp[2].split(".")[0]
     video_start = datetime.datetime.strptime(date+video_start, '%y%m%d%H%M%S')
     video_end = datetime.datetime.strptime(date+video_end, '%y%m%d%H%M%S') 
-    clip_start = datetime.datetime.strptime(start, '%Y%m%d%H%M%S')
-    clip_end = datetime.datetime.strptime(end, '%Y%m%d%H%M%S')
-   
-    if (clip_start < video_start or clip_end > video_end):
-        print("TODO: Combine multiple clips")
-        return
-    increment = (video_end - video_start) / count
-    fps = round(1000000 / increment.microseconds)
-    first_frame = round((clip_start - video_start) / increment)
-    last_frame = round(first_frame + (clip_end-clip_start) / increment)
 
-    # clip the video
-    encode_command = ["ffmpeg", "-r", f"{fps}", "-f", "image2", "-s", "2560x1440", "-start_number", f"{first_frame}", "-i", output_dir + "/output_%05d.jpg", "-vframes", f"{last_frame-first_frame}", "-vcodec", "libx264", "-crf", "25", "-pix_fmt", "yuv420p", f"clips/{start}_{end}.mp4"]
-    clp = subprocess.run(encode_command)
-
+    return video_start, video_end
 
 def identify_events():
-    
+    # turns list of sightings into list of start and end times
     timestamps = []
     with open("sightings.txt", "r") as f:
         timestamps = f.read().split("\n")[:-1]
@@ -139,7 +150,7 @@ def identify_events():
     for i in range(len(datetimes)):
         if datetimes[i] - datetimes[start] > datetime.timedelta(seconds=60):
             # end of event
-            event = (datetimes[start] - datetime.timedelta(seconds=15)).strftime("%Y%m%d%H%M%S"), (datetimes[i - 1] + datetime.timedelta(seconds = 15)).strftime("%Y%m%d%H%M%S")
+            event = (datetimes[start] - datetime.timedelta(seconds=15)), (datetimes[i - 1] + datetime.timedelta(seconds = 15))
             events.append(event)
             start = i
     return events
@@ -148,8 +159,10 @@ if __name__ == "__main__":
     from auth import IP_ADDRESS, AUTH
     events = identify_events()
     records = list_records(IP_ADDRESS, AUTH)
+    #grack0 = datetime.datetime.strptime("220609185800", '%y%m%d%H%M%S')
+    #grack1 = datetime.datetime.strptime("220609190100", '%y%m%d%H%M%S')
+    #events = [(grack0, grack1)]
     for event in events:
-        start, end = event
-        clip(start, end, IP_ADDRESS, AUTH, records)
+        clip(*event, IP_ADDRESS, AUTH, records)
  
     

@@ -16,8 +16,18 @@ The web CGI uses HTTP Basic Authentication, meaning **your credentials will be s
 - shift/ctrl: Change speed
 - a: toggle image processing
 
-### detection/yolo_all
-can be run by itself to test object detection
+### label.py
+- quick labeling tool, saves in xml format
+- left/right: prev/next image
+- left click: move bounding box
+- right click: create new bounding box
+- delete: delete bounding box
+- s: toggle auto-skip labeled images
+- space: next image, enable auto-skip
+- hotkeys: label bird species
+
+### downloader.py
+- downloads video clips and extracts clips containing bird activity, also fixes the timings which are missing from the .265 files
 
 ## Dependencies
 - python3
@@ -26,6 +36,7 @@ can be run by itself to test object detection
 	- cv2
 	- rtsp
 - cuda
+- darknet (clone into birdcam/ directory and build)
 
 ## Supported Cameras
 Camera control is performed using the hi3510 Common Gateway Interface. It should also work with other PTZ cameras which implement the same CGI.

@@ -36,9 +36,9 @@ def image_process(input_queue, output_queue):
         command = input_queue.get(block=True, timeout=None)
         start = time.time()
         received = datetime.now().strftime("%Y%m%d-%H%M%S.jpg")
+        time.sleep(0.5) # We don't need 20 images per second...
         image, cvimage = load_image(network, command)
         
-        # memory leak :(
         raw_detections = darknet.detect_image(network, class_names, image, thresh=0.7, hier_thresh=.75, nms=.45)
         
         img_height, img_width, _ = cvimage.shape

@@ -18,12 +18,6 @@ import numpy as np
 
 from auth import IP_ADDRESS, AUTH
 
-
-#############
-#########
-
-
-
 commands = ('left', 'right', 'up', 'down', 'home', 'stop', 'zoomin', 'zoomout', 'focusin', 'focusout', 'hscan', 'vscan')
 presets = ((0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1), (-1, 0), (-1, 1))
 infrared = "open", "close", "auto"
@@ -133,9 +127,8 @@ def main():
                     if box:
                         print(f"DETECTED: {box}")
                         bird_boxes = box
-                        box_timer = time.time() + 15
+                        box_timer = time.time() + 3
                         for b in box:
-                            #x1,y1,x2,y2, label, confidence = b
                             label, confidence, rect = b
                             x1,y1,x2,y2 = rect
                             if label == "bird":
@@ -347,20 +340,17 @@ def main():
             if click_point:
                 pygame.draw.circle(display, (255,0,0), click_point, 3, 3)
             for box in bird_boxes:
-                #x1,y1,x2,y2, label, confidence = box
                 label, confidence, rect = box
                 x,y,w,h = rect
-                #scale = (display_size[0]/hq_size[0], display_size[1]/hq_size[1])
                 scale = (display_size[0], display_size[1])
-                #rect = (x1*scale[0], y1*scale[1], (x2-x1)*scale[0], (y2-y1)*scale[1])
                 rect = ((x-w/2)*scale[0], (y-h/2)*scale[1], (w) * scale[0], (h)*scale[1])
                 pygame.draw.rect(display, black, rect, width=2)
                 if label == "bird":
-                    #display.blit(GOOD_BIRD, ((rect[0]+rect[2])/2, (rect[1]+rect[3])/2))
                     display.blit(GOOD_BIRD, (rect[0], rect[1]))
             
             if bird_boxes and time.time() > box_timer:
                 bird_boxes = []
+
         # Update the screen
         pygame.display.update()
         display.fill(black)

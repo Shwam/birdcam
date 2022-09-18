@@ -134,4 +134,6 @@ detection/yolov3.weights
 # Saved images, videos, and labels
 *.jpg
 *.xml
+images/*.txt
+sightings.txt
 *.265

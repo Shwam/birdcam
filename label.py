@@ -52,6 +52,7 @@ def main():
     "v":"gray catbird"}
     hotkeys = {pygame.__dict__[f"K_{k}"]:hotkey_letters[k] for k in hotkey_letters}
     
+    show_ui = True
     click_point = None
     release_point = None
     mouse_pos = None
@@ -59,6 +60,7 @@ def main():
     # load images
     image_path = "images/"
     files = os.listdir(image_path)
+    #files = list(reversed(sorted([file[:-4] for file in files if file[-4:] == ".xml"])))
     files = [file[:-4] for file in files if file[-4:] == ".xml"]
 
     # load bird species
@@ -71,6 +73,7 @@ def main():
     file_name = files[current_file]
     tree = ET.parse(f"images/{file_name}.xml") 
     bird_boxes = get_boxes(tree)
+    LGUI = False
     while True:
         
         display_size = pygame.display.get_surface().get_size()
@@ -94,8 +97,12 @@ def main():
             if event.type == pygame.QUIT: # x in titlebar
                 halt(image_process)
             elif event.type == pygame.KEYDOWN:
+                if LGUI:
+                    continue
                 if event.key == pygame.K_q:
                     exit(1)
+                elif event.key == pygame.K_LGUI:
+                    LGUI = True
                 elif event.key in range(pygame.K_1, pygame.K_9 + 1):
                     relabel(tree, file_name, current_box, bird_species[event.key - pygame.K_0 - 1])
                     bird_boxes = get_boxes(tree)
@@ -122,6 +129,22 @@ def main():
                         
                         tree = ET.parse(f"images/{file_name}.xml")
                         bird_boxes = get_boxes(tree)
+                elif event.key == pygame.K_j:
+                    auto_skip = False
+                    current_file -= 500
+                    file_name = files[current_file]
+                    
+                    tree = ET.parse(f"images/{file_name}.xml")
+                    bird_boxes = get_boxes(tree)
+                    current_box = len(bird_boxes) - 1
+                elif event.key == pygame.K_l:
+                    auto_skip = False
+                    current_file += 500
+                    file_name = files[current_file]
+                    
+                    tree = ET.parse(f"images/{file_name}.xml")
+                    bird_boxes = get_boxes(tree)
+                    current_box = 0
                 elif event.key == pygame.K_DELETE:
                     remove_box(tree, file_name, current_box) 
                     bird_boxes = get_boxes(tree)
@@ -130,11 +153,19 @@ def main():
                 elif event.key == pygame.K_f:
                     toggle_flag(tree, file_name)
                 elif event.key == pygame.K_u:
-                    show_ui = not hsow_ui 
+                    show_ui = not show_ui 
                 elif event.key in hotkeys.keys():
                     print(f"Relabeling bird {current_box} in {file_name} to {hotkeys[event.key]}")
                     relabel(tree, file_name, current_box, hotkeys[event.key])
                     bird_boxes = get_boxes(tree)
+                else:
+                    for key in keys:
+                        if event.key == keys[key]:
+                            print(key, event.key)
+                            break
+            elif event.type == pygame.KEYUP:
+                if event.key == pygame.K_LGUI:
+                    LGUI = False
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 click_point = event.pos
             elif event.type == pygame.MOUSEBUTTONUP:
@@ -157,7 +188,6 @@ def main():
         image = pygame.transform.scale(image, display_size)
         display.blit(image, (0,0))
 
-        show_ui = True
         # Display control information
         if show_ui:
             # Overlay
@@ -177,7 +207,7 @@ def main():
         
             display.blit(overlay, (5,30))
             
-
+        if True:
             # draw rectangle 
             if click_point:
                 pygame.draw.circle(display, (255,0,0), click_point, 3, 3)

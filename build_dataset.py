@@ -123,7 +123,7 @@ if __name__ == "__main__":
     
     # 3. Create file obj.data
     with open(f"{darknet_data}obj.data", "w") as f:
-        f.write("classes = {len(classes)}\ntrain  = data/train.txt\nvalid  = data/test.txt\nnames = data/obj.names\nbackup = backup/")
+        f.write(f"classes = {len(classes)}\ntrain  = data/train.txt\nvalid  = data/test.txt\nnames = data/obj.names\nbackup = backup/")
 
     # 4. Put image-files (.jpg) of your objects in the directory build\darknet\x64\data\obj
     if os.listdir(f"{darknet_data}obj/"):

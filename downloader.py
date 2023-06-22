@@ -70,7 +70,7 @@ def seek(start, end, records):
                 urls.append(l_url)
                 found = True
         else:
-            if end >= l_end:
+            if end >= l_start:
                 urls.append(l_url)
             else:
                 return urls
@@ -78,22 +78,24 @@ def seek(start, end, records):
 
 def clip(start, end, ip_address, creds, records=None):
     # downloads the necessary videos and extracts a clip from them based on the specified start and end times
+
+    # figure out which files are required from what we have
     if not records:
         records = list_records(ip_address, creds)
-     
     required_files = seek(start, end, records)
+
     print(f"Gathering {len(required_files)} file{'s' if len(required_files) != 1 else ''} for event {start}{end}")
+
     for file in required_files:
         video = download(ip_address, creds, file)
 
         # Edit the video down to the required regions
         video_start, video_end = video_times(video)
-        if start < video_start:
-            start = video_start
-        if end > video_end:
-            end = video_end
+        clip_start = max(start, video_start)
+        clip_end = min(end, video_end)
         
-        clip_section(video, max(start, video_start), min(end, video_end))
+        print(f"Clipping {clip_start}-{clip_end}")
+        clip_section(video, clip_start, clip_end)
         # TODO: combine overlapping clips
     
 def clip_section(path, start, end):
@@ -162,6 +164,9 @@ if __name__ == "__main__":
     #grack0 = datetime.datetime.strptime("220609185800", '%y%m%d%H%M%S')
     #grack1 = datetime.datetime.strptime("220609190100", '%y%m%d%H%M%S')
     #events = [(grack0, grack1)]
+    raccoon0 = datetime.datetime.strptime("230620231100", '%y%m%d%H%M%S')
+    raccoon1 = datetime.datetime.strptime("230620232100", '%y%m%d%H%M%S')
+    events = [(raccoon0, raccoon1)]
     for event in events:
         clip(*event, IP_ADDRESS, AUTH, records)
  

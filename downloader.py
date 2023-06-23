@@ -103,7 +103,7 @@ def clip_section(path, start, end):
     video = cv2.VideoCapture(path)
     f = path.split("/")
     output_dir = "/".join(f[0:-1]) + "/." + f[-1]
-    clip_path = f"clips/{start.strftime('%Y%m%d%H%M%S')}_{end.strftime('%Y%m%d%H%M%S')}.mp4"
+    clip_path = f"clips/{start.strftime('%y%m%d%H%M%S')}_{end.strftime('%y%m%d%H%M%S')}.mp4"
     
     if os.path.exists(clip_path):
         return
@@ -141,12 +141,15 @@ def video_times(path):
 
 def identify_events():
     # turns list of sightings into list of start and end times
-    timestamps = []
+    timestamps = set()
     with open("sightings.txt", "r") as f:
-        timestamps = f.read().split("\n")[:-1]
+        timestamps_counts = f.read().split("\n")[:-1]
+        for tc in timestamps_counts:
+            timestamps.add(tc.split("\t")[0])
+    timestamps = sorted(list(timestamps))
  
-    datetimes = [datetime.datetime.strptime(t, '%Y%m%d%H%M%S') for t in timestamps]
-
+    datetimes = [datetime.datetime.strptime(t, '%y%m%d%H%M%S') for t in timestamps]
+    print(datetimes)
     events = []
     start = 0
     for i in range(len(datetimes)):
@@ -155,18 +158,20 @@ def identify_events():
             event = (datetimes[start] - datetime.timedelta(seconds=15)), (datetimes[i - 1] + datetime.timedelta(seconds = 15))
             events.append(event)
             start = i
+    # final event
+    if datetimes:
+        event = (datetimes[start] - datetime.timedelta(seconds=15)), (datetimes[i - 1] + datetime.timedelta(seconds = 15))
+        events.append(event)
     return events
 
 if __name__ == "__main__":
     from auth import IP_ADDRESS, AUTH
-    events = identify_events()
     records = list_records(IP_ADDRESS, AUTH)
-    #grack0 = datetime.datetime.strptime("220609185800", '%y%m%d%H%M%S')
-    #grack1 = datetime.datetime.strptime("220609190100", '%y%m%d%H%M%S')
-    #events = [(grack0, grack1)]
-    raccoon0 = datetime.datetime.strptime("230620231100", '%y%m%d%H%M%S')
-    raccoon1 = datetime.datetime.strptime("230620232100", '%y%m%d%H%M%S')
-    events = [(raccoon0, raccoon1)]
+    events = identify_events()
+    print(events)
+    #raccoon0 = datetime.datetime.strptime("230620231100", '%y%m%d%H%M%S')
+    #raccoon1 = datetime.datetime.strptime("230620232100", '%y%m%d%H%M%S')
+    #events = [(raccoon0, raccoon1)]
     for event in events:
         clip(*event, IP_ADDRESS, AUTH, records)
  

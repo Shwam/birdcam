@@ -10,11 +10,10 @@ import time
 from urllib.parse import quote
 import multiprocessing, threading
 
-import detect
+from darknet_server.code.client import DarknetClient
+
 import rtsp
-import cv2
 import pygame
-import numpy as np
 
 from auth import IP_ADDRESS, AUTH
 
@@ -40,16 +39,20 @@ SPEED_RANGE = (1, 63)
 SPEED_THRESHOLD = 0.001
 IR_TOGGLE = 6
 
-client = rtsp.Client(rtsp_server_uri = f'rtsp://{IP_ADDRESS}:554/1')
+rtsp_client = rtsp.Client(rtsp_server_uri = f'rtsp://{IP_ADDRESS}:554/1')
 
 spinner = itertools.cycle('◴'*3 + '◷'*3 + '◶'*3 + '◵'*3)
 
 def main():
     # Initialize image processing
+    processing_image = False
     image_queue = multiprocessing.Queue()
+    local_image_queue = multiprocessing.Queue() # keep track of what's been sent
     boxes = multiprocessing.Queue()
-    image_process = multiprocessing.Process(target = detect.image_process, args=[image_queue, boxes])
+    client = DarknetClient('localhost', 7061, image_queue, boxes)
+    image_process = multiprocessing.Process(target = DarknetClient.run, args=[client,])
     image_process.start()
+
     processing_timeout = time.time() + 60
     bird_boxes = []
 
@@ -99,7 +102,6 @@ def main():
     ir_toggling = False
     ir_info = myfont.render(f'IR {infrared_symbols[infrared_index]}', False, white)
     ai_active = True
-    processing_image = False
     box_timer = time.time()
     GOOD_BIRD = myfont.render(f'good bird', False, black)
     last_chirp = time.time()
@@ -123,25 +125,35 @@ def main():
         if ai_active:
             if processing_image:
                 if not boxes.empty():
-                    box = boxes.get(False)
+                    timestamp, box = boxes.get(False)
+                    birds_present = 0
                     if box:
-                        print(f"DETECTED: {box}")
                         bird_boxes = box
                         box_timer = time.time() + 3
+                        # find the birds
                         for b in box:
                             label, confidence, rect = b
                             x1,y1,x2,y2 = rect
                             if label == "bird":
-                                t = datetime.now().strftime("%Y%m%d%H%M%S")
-                                with open("sightings.txt", "a") as f:
-                                    f.write(t + "\n")
-                                if time.time() > last_chirp:
-                                    chirp()
-                                last_chirp = time.time() + 360
+                                birds_present += 1
+
+                    image = local_image_queue.get(False)
+
+                    # save the detection
+                    if birds_present:
+                        print(f"DETECTED: {box}")
+                        with open("sightings.txt", "a") as f:
+                            f.write(f"{timestamp}\t{birds_present}\n")
+                        if time.time() > last_chirp:
+                            chirp()
+                        last_chirp = time.time() + 360
+                        with open("images/" + timestamp + ".jpg", "wb") as f:
+                            f.write(image)
 
                     processing_image = False
+                            
             else:
-                queue_snapshot(image_queue)
+                queue_snapshot(image_queue, local_image_queue)
                 processing_image = True
                 processing_timeout = time.time() + 30
 
@@ -155,9 +167,12 @@ def main():
         # Get mouse/keyboard events
         for event in pygame.event.get():
             if event.type == pygame.QUIT: # x in titlebar
+                # Tell the client to shut down
+                image_queue.put(None)
                 halt(image_process)
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_q:
+                    image_queue.put(None)
                     halt(image_process)
                 if event.key == pygame.K_LGUI:
                     K_LGUI = True
@@ -195,7 +210,7 @@ def main():
                 elif event.key == pygame.K_SPACE:
                     display.fill(white)
                     pygame.display.update()
-                    take_snapshot(client)
+                    take_snapshot(rtsp_client)
                 elif event.key == pygame.K_i:
                     infrared_index = (infrared_index + 1) % 3
                     ir_info = myfont.render(f'IR {infrared_symbols[infrared_index]}', False, white)
@@ -251,7 +266,7 @@ def main():
                     if not snapshot_held:
                         display.fill(white)
                         pygame.display.update()
-                        take_snapshot(client)
+                        take_snapshot(rtsp_client)
                         snapshot_held = True
                 if joystick.get_button(IR_TOGGLE):
                     if not ir_toggling:
@@ -305,8 +320,8 @@ def main():
 
         # Display the latest image
 
-        if not realtime and client:
-            image = client.read()
+        if not realtime and rtsp_client:
+            image = rtsp_client.read()
             # Calculate mode, size and data
             mode = image.mode
             size = image.size
@@ -320,6 +335,11 @@ def main():
         image = pygame.transform.scale(image, display_size)
         display.blit(image, (0,0))
 
+        if time.time() > processing_timeout and ai_active and processing_image and not local_image_queue.empty():
+            dead_image = local_image_queue.get(False)
+            processing_image = False
+            print("AI TImed out")
+            ai_active = False
 
         # Display control information
         if show_ui:
@@ -381,16 +401,19 @@ def set_preset(name):
     request = f"http://{IP_ADDRESS}/cgi-bin/hi3510/preset.cgi?-act=set&-status=1&-number={name}"
     return requests.get(request, auth=AUTH)
 
-def get_snapshot(high_quality=False, image_queue=None):
+def get_snapshot(high_quality=False, image_queue=None, local_image_queue=None):
     request = f"http://{IP_ADDRESS}/tmpfs/{'snap' if high_quality else 'auto'}.jpg"
     response = requests.get(request, auth=AUTH)
+    content = response._content
     if image_queue != None:
-        image_queue.put(response._content)
+        image_queue.put(content)
+        if local_image_queue != None:
+            local_image_queue.put(content)
     else:
         return response._content
 
-def queue_snapshot(image_queue, high_quality=True):
-    threading.Thread(target=get_snapshot, args=[high_quality, image_queue]).start()
+def queue_snapshot(image_queue, local_image_queue, high_quality=True):
+    threading.Thread(target=get_snapshot, args=[high_quality, image_queue, local_image_queue]).start()
 
 def save_hqsnapshot(filename):
     content = get_snapshot(high_quality=True)
@@ -403,7 +426,7 @@ def save_rtsp_snapshot(rtsp_client, filename):
     snapshot.save(filename)
 
 def take_snapshot(rtsp_client=None):
-    filename = "snapshots/" + datetime.now().strftime("%Y%m%d-%H%M%S.jpg")
+    filename = "snapshots/" + datetime.now().strftime("%Y%m%d%H%M%S.jpg")
 
     if rtsp_client:
         threading.Thread(target=save_rtsp_snapshot, args=[rtsp_client, filename]).start()

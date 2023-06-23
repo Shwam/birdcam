@@ -12,4 +12,5 @@ downy woodpecker
 american goldfinch
 carolina wren
 brown-headed cowbird
-yellow-breasted nuthatch
+white-breasted nuthatch
+red-breasted nuthatch

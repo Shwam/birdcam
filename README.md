@@ -32,12 +32,15 @@ The web CGI uses HTTP Basic Authentication, meaning **your credentials will be s
 ## Dependencies
 - python3
 	- pygame
-	- keras
-	- cv2
 	- rtsp
-- cuda
-- darknet (clone into birdcam/ directory and build)
+- nvidia-docker
+- docker-compose
 
+## Installation
+```git submodule update --init --recursive 
+cd darknet_server
+docker-compose up
+```
 ## Supported Cameras
 Camera control is performed using the hi3510 Common Gateway Interface. It should also work with other PTZ cameras which implement the same CGI.
 

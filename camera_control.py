@@ -2,6 +2,7 @@
 import requests
 import io
 import os
+import sys
 from datetime import datetime
 import random
 import subprocess
@@ -10,12 +11,13 @@ import time
 from urllib.parse import quote
 import multiprocessing, threading
 
-from darknet_server.code.client import DarknetClient
-
-import rtsp
 import pygame
+import rtsp
+from gtts import gTTS
 
 from auth import IP_ADDRESS, AUTH
+from util import save_xml
+from darknet_server.code.client import DarknetClient
 
 commands = ('left', 'right', 'up', 'down', 'home', 'stop', 'zoomin', 'zoomout', 'focusin', 'focusout', 'hscan', 'vscan')
 presets = ((0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1), (-1, 0), (-1, 1))
@@ -23,6 +25,7 @@ infrared = "open", "close", "auto"
 infrared_symbols = "●", "○", "◐"
 black = (0,0,0)
 white = (255,255,255)
+pink = (245, 115, 158)
 
 HORIZONTAL_AXIS = 2
 HORIZONTAL_DEADZONE = 0.1
@@ -103,7 +106,7 @@ def main():
     ir_info = myfont.render(f'IR {infrared_symbols[infrared_index]}', False, white)
     ai_active = True
     box_timer = time.time()
-    GOOD_BIRD = myfont.render(f'good bird', False, black)
+    GOOD_BIRD = myfont.render(f'good bird', False, pink)#black)
     last_chirp = time.time()
     realtime = False
     bird_sightings = []
@@ -111,8 +114,11 @@ def main():
     set_name("birdcam")
     set_time()
     
+    muted = False
     zoom = False
     shiftrtsp_timer = None
+    focus_gained = time.time() # Time that the window last gained focus
+    is_focused = False
     def shift_rtsp(rt, timer):
         if rt == False or timer != None: 
             timer = time.time() + 2
@@ -127,28 +133,40 @@ def main():
                 if not boxes.empty():
                     timestamp, box = boxes.get(False)
                     birds_present = 0
+                    cats_present = 0
                     if box:
                         bird_boxes = box
                         box_timer = time.time() + 3
                         # find the birds
                         for b in box:
                             label, confidence, rect = b
+                            if not muted and confidence > 0.9:
+                                if label not in ("chair", "cake", "fire hydrant", "bird"):
+                                    speak(label)
                             x1,y1,x2,y2 = rect
                             if label == "bird":
                                 birds_present += 1
+                            if label == "cat":
+                                cats_present += 1
 
                     image = local_image_queue.get(False)
 
                     # save the detection
-                    if birds_present:
+                    if birds_present or cats_present:
                         print(f"DETECTED: {box}")
-                        with open("sightings.txt", "a") as f:
-                            f.write(f"{timestamp}\t{birds_present}\n")
+                        if birds_present:
+                            with open("sightings.txt", "a") as f:
+                                f.write(f"{timestamp}\t{birds_present}\n")
                         if time.time() > last_chirp:
-                            chirp()
+                            if birds_present:
+                                chirp()
+                            elif cats_present:
+                                meow()
                         last_chirp = time.time() + 360
-                        with open("images/" + timestamp + ".jpg", "wb") as f:
+                        fpath = "images/" + timestamp + ".jpg"
+                        with open(fpath, "wb") as f:
                             f.write(image)
+                        save_xml(box, fpath)
 
                     processing_image = False
                             
@@ -168,15 +186,18 @@ def main():
         for event in pygame.event.get():
             if event.type == pygame.QUIT: # x in titlebar
                 # Tell the client to shut down
-                image_queue.put(None)
-                halt(image_process)
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_q:
-                    image_queue.put(None)
-                    halt(image_process)
+                halt(image_process, image_queue, local_image_queue, rtsp_client)
+            elif event.type == pygame.WINDOWFOCUSGAINED:
+                focus_gained = time.time()
+                is_focused = True
+            elif event.type == pygame.WINDOWFOCUSLOST:
+                is_focused = False
+            elif event.type == pygame.KEYDOWN and not K_LGUI:
                 if event.key == pygame.K_LGUI:
                     K_LGUI = True
-                elif event.key in range(pygame.K_1, pygame.K_9 + 1) and not K_LGUI:
+                elif event.key == pygame.K_q:
+                    halt(image_process, image_queue, local_image_queue, rtsp_client)
+                elif event.key in range(pygame.K_1, pygame.K_9 + 1) and not K_LGUI and is_focused and time.time() - 0.1 > focus_gained:
                     if speed_modifier != 0.01:
                         ctrl_preset(event.key - pygame.K_0)
                     else:
@@ -223,6 +244,8 @@ def main():
                     speed_modifier = 0.01
                 elif event.key == pygame.K_F11:
                     pass
+                elif event.key == pygame.K_m:
+                    muted = not muted
                 else:
                     for k in keys:
                         if keys[k] == event.key:
@@ -344,16 +367,20 @@ def main():
         # Display control information
         if show_ui:
             # Overlay
-            overlay = pygame.Surface((100,60), pygame.SRCALPHA) 
+            overlay = pygame.Surface((100,(90 if muted else 60)), pygame.SRCALPHA) 
             overlay.fill((0,0,0))
             
             ai_info = myfont.render(f'AI {"◙" if time.time() > processing_timeout and ai_active and processing_image else next(spinner) if processing_image and ai_active else "●" if ai_active else "○"}', False, white)
+            
+            audio_info = myfont.render(f'Muted', False, white)
      
             overlay.blit(ir_info, (0,0))
             overlay.blit(ai_info, (0,30))
+            if muted:
+                overlay.blit(audio_info, (0, 60))
             overlay.set_alpha(110)
             display.blit(overlay, (5,30))
-            
+             
             # center cursor
             pygame.draw.circle(display,black,((display_size[0]-10)/2,(display_size[1]-10)/2), 10, 3)
 
@@ -364,9 +391,11 @@ def main():
                 x,y,w,h = rect
                 scale = (display_size[0], display_size[1])
                 rect = ((x-w/2)*scale[0], (y-h/2)*scale[1], (w) * scale[0], (h)*scale[1])
-                pygame.draw.rect(display, black, rect, width=2)
+                pygame.draw.rect(display, pink, rect, width=2)#black, rect, width=2)
                 if label == "bird":
                     display.blit(GOOD_BIRD, (rect[0], rect[1]))
+                else:
+                    print(label)
             
             if bird_boxes and time.time() > box_timer:
                 bird_boxes = []
@@ -375,16 +404,41 @@ def main():
         pygame.display.update()
         display.fill(black)
 
-def halt(image_process):
+def halt(image_process, image_queue, local_image_queue, rtsp_client):
+    image_queue.put(None) # send the halt command
+    rtsp_client.close() # Close the rtsp client
+    time.sleep(0.1)
     if image_process:
         image_process.terminate()
         image_process.join()
+
+    # Empty out the queues
+    while not image_queue.empty():
+        image_queue.get()
+    while not local_image_queue.empty():
+        local_image_queue.get()
+
+    # Shut down pygame
+    pygame.quit()
+    
+    # Exit the main program
     exit()
 
 def chirp():
     subprocess.Popen(['ffplay', 'chirp.wav', '-nodisp', '-autoexit'],
                          stdout=subprocess.PIPE, 
                          stderr=subprocess.PIPE)
+
+def meow():
+    subprocess.Popen(['ffplay', 'meow.mp3', '-nodisp', '-autoexit'],
+                         stdout=subprocess.PIPE, 
+                         stderr=subprocess.PIPE)
+
+def speak(text):  
+    myobj = gTTS(text=text, lang="en", slow=False)
+      
+    myobj.save("voice.mp3")
+    os.system("(ffplay voice.mp3 -autoexit -nodisp -af 'volume=0.1' > /dev/null 2>&1)&")
 
 def send_command(name, speed=1):
     if speed > SPEED_RANGE[1] - 1:
@@ -406,9 +460,9 @@ def get_snapshot(high_quality=False, image_queue=None, local_image_queue=None):
     response = requests.get(request, auth=AUTH)
     content = response._content
     if image_queue != None:
-        image_queue.put(content)
         if local_image_queue != None:
             local_image_queue.put(content)
+        image_queue.put(content)
     else:
         return response._content
 
@@ -426,7 +480,7 @@ def save_rtsp_snapshot(rtsp_client, filename):
     snapshot.save(filename)
 
 def take_snapshot(rtsp_client=None):
-    filename = "snapshots/" + datetime.now().strftime("%Y%m%d%H%M%S.jpg")
+    filename = "snapshots/" + datetime.now().strftime("%y%m%d%H%M%S.jpg")
 
     if rtsp_client:
         threading.Thread(target=save_rtsp_snapshot, args=[rtsp_client, filename]).start()

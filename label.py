@@ -42,14 +42,16 @@ def main():
     "t":"tufted titmouse",
     "h":"house finch",
     "m":"mourning dove",
+    "e":"eurasian collared-dove",
     "r":"red-bellied woodpecker",
     "i":"hairy woodpecker",
     "d":"downy woodpecker",
     "a":"american goldfinch",
     "w":"carolina wren",
     "o":"brown-headed cowbird",
-    "y":"yellow-breasted nuthatch",
-    "v":"gray catbird"}
+    "n":"white-breasted nuthatch",
+    "v":"gray catbird",
+    "p":"black-billed magpie"}
     hotkeys = {pygame.__dict__[f"K_{k}"]:hotkey_letters[k] for k in hotkey_letters}
     
     show_ui = True
@@ -60,8 +62,8 @@ def main():
     # load images
     image_path = "images/"
     files = os.listdir(image_path)
-    #files = list(reversed(sorted([file[:-4] for file in files if file[-4:] == ".xml"])))
-    files = [file[:-4] for file in files if file[-4:] == ".xml"]
+    files = list(reversed(sorted([file[:-4] for file in files if file[-4:] == ".xml"])))
+    #files = [file[:-4] for file in files if file[-4:] == ".xml"]
 
     # load bird species
     with open("bird_species.txt", "r") as f:
@@ -82,7 +84,7 @@ def main():
         
         # seek to first unlabeled bird
         if auto_skip:
-            while len(bird_boxes) == 0 or bird_boxes[current_box][-1] != "bird":
+            while len(bird_boxes) <= 0 or bird_boxes[current_box][-1] != "dog":
                 current_box +=1
                 if current_box >= len(bird_boxes):
                     current_file += 1

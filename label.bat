@@ -1,1 +1,0 @@
-python C:\Users\Shawn\AppData\Roaming\Python\Python37\site-packages\labelImg\labelImg.py images bird_species.txt

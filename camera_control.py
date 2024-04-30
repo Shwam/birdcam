@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import requests
 import io
 import os
 import sys
@@ -8,16 +7,19 @@ import random
 import subprocess
 import itertools
 import time
-from urllib.parse import quote
 import multiprocessing, threading
+import queue
 
+os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
 import pygame
 import rtsp
 from gtts import gTTS
 
-from auth import IP_ADDRESS, AUTH
-from util import save_xml
+import util
 from darknet_server.code.client import DarknetClient
+from onvif_control import ONVIFControl
+from cgi_control import CGIControl
+
 
 commands = ('left', 'right', 'up', 'down', 'home', 'stop', 'zoomin', 'zoomout', 'focusin', 'focusout', 'hscan', 'vscan')
 presets = ((0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1), (-1, 0), (-1, 1))
@@ -42,12 +44,32 @@ SPEED_RANGE = (1, 63)
 SPEED_THRESHOLD = 0.001
 IR_TOGGLE = 6
 
-rtsp_client = rtsp.Client(rtsp_server_uri = f'rtsp://{IP_ADDRESS}:554/1')
 
-spinner = itertools.cycle('◴'*3 + '◷'*3 + '◶'*3 + '◵'*3)
 
 def main():
+    # Load configuration settings    
+    CONFIG = util.load_config(".config")
+
+    # Initialize RTSP
+    if len(sys.argv) > 1:
+        CONFIG = util.load_config(sys.argv[1])
+    rtsp_client = rtsp.Client(rtsp_server_uri = CONFIG["rtsp"])
+    if rtsp_client.isOpened():
+        print(f"Connected to RTSP client {CONFIG['rtsp']}")
+    else:
+        rtsp_client = None
+        print("Could not connect to RTSP, falling back to /tmpfs/auto.jpg")
+
+    # Initialize CGI controls
+    if "cgi" in CONFIG:
+        cgi = CGIControl(CONFIG)
+
+    # Initialize ONVIF controls
+    if "onvif" in CONFIG:
+        onvif = ONVIFControl(CONFIG)
+    
     # Initialize image processing
+    spinner = itertools.cycle('◴'*3 + '◷'*3 + '◶'*3 + '◵'*3)
     processing_image = False
     image_queue = multiprocessing.Queue()
     local_image_queue = multiprocessing.Queue() # keep track of what's been sent
@@ -91,6 +113,7 @@ def main():
     last_preset = (0, 0)
     snapshot_held = False
     K_LGUI = False
+    modifiers = set()
 
     horizontal = vertical = 0
     hspeed = vspeed = 0
@@ -101,7 +124,9 @@ def main():
     
     # Information display
     show_ui = True
-    infrared_index = infrared.index(get_infrared())
+    infrared_index = 0
+    if 'cgi' in CONFIG:
+        infrared_index = infrared.index(cgi.get_infrared())
     ir_toggling = False
     ir_info = myfont.render(f'IR {infrared_symbols[infrared_index]}', False, white)
     ai_active = True
@@ -111,8 +136,8 @@ def main():
     realtime = False
     bird_sightings = []
 
-    set_name("birdcam")
-    set_time()
+    cgi.set_name("birdcam")
+    cgi.set_time()
     
     muted = False
     zoom = False
@@ -141,39 +166,41 @@ def main():
                         for b in box:
                             label, confidence, rect = b
                             if not muted and confidence > 0.9:
-                                if label not in ("chair", "cake", "fire hydrant", "bird"):
-                                    speak(label)
+                                if label not in ("chair", "cake", "fire hydrant", "bird", "frisbee", "bowl", "spoon"):
+                                    speak(label.replace("person", "intruder"))
                             x1,y1,x2,y2 = rect
                             if label == "bird":
                                 birds_present += 1
-                            if label == "cat":
+                            if label in ("cat", "bear", "dog"):
                                 cats_present += 1
+                    try:
+                        image = local_image_queue.get(False)
 
-                    image = local_image_queue.get(False)
-
-                    # save the detection
-                    if birds_present or cats_present:
-                        print(f"DETECTED: {box}")
-                        if birds_present:
-                            with open("sightings.txt", "a") as f:
-                                f.write(f"{timestamp}\t{birds_present}\n")
-                        if time.time() > last_chirp:
+                        # save the detection
+                        if birds_present or cats_present:
+                            print(f"DETECTED: {box}")
                             if birds_present:
-                                chirp()
-                            elif cats_present:
-                                meow()
-                        last_chirp = time.time() + 360
-                        fpath = "images/" + timestamp + ".jpg"
-                        with open(fpath, "wb") as f:
-                            f.write(image)
-                        save_xml(box, fpath)
+                                with open("sightings.txt", "a") as f:
+                                    f.write(f"{timestamp}\t{birds_present}\n")
+                            if time.time() > last_chirp:
+                                if birds_present:
+                                    chirp()
+                                elif cats_present:
+                                    meow()
+                            last_chirp = time.time() + 360
+                            fpath = "images/" + timestamp + ".jpg"
+                            with open(fpath, "wb") as f:
+                                f.write(image)
+                            util.save_xml(box, fpath)
 
-                    processing_image = False
+                        processing_image = False
+                    except queue.Empty:
+                        pass
                             
             else:
-                queue_snapshot(image_queue, local_image_queue)
+                queue_snapshot(cgi, image_queue, local_image_queue)
                 processing_image = True
-                processing_timeout = time.time() + 30
+                processing_timeout = time.time() + 10
 
 
         # Get joystick axes
@@ -199,9 +226,9 @@ def main():
                     halt(image_process, image_queue, local_image_queue, rtsp_client)
                 elif event.key in range(pygame.K_1, pygame.K_9 + 1) and not K_LGUI and is_focused and time.time() - 0.1 > focus_gained:
                     if speed_modifier != 0.01:
-                        ctrl_preset(event.key - pygame.K_0)
+                        cgi.ctrl_preset(event.key - pygame.K_0)
                     else:
-                        set_preset(event.key - pygame.K_0)
+                        cgi.set_preset(event.key - pygame.K_0)
                         print(f"Set current frame as hotkey {event.key - pygame.K_0}")
                 elif event.key == pygame.K_LEFT:
                     horizontal = -1
@@ -213,20 +240,22 @@ def main():
                     vertical = -1
                 elif event.key == pygame.K_a:
                     ai_active = not ai_active 
+                    if ai_active:
+                        processing_timeout = time.time() + 10
                 elif event.key == pygame.K_r:
                     realtime = not realtime
                     shiftrtsp_timer = None
                 elif event.key == pygame.K_EQUALS:
-                    send_command('zoomin', 50)
+                    cgi.send_command('zoomin', 50)
                     zoom = True
                 elif event.key == pygame.K_MINUS:
-                    send_command('zoomout', 50)
+                    cgi.send_command('zoomout', 50)
                     zoom = True
                 elif event.key == pygame.K_RIGHTBRACKET:
-                    send_command('focusin', 50)
+                    cgi.send_command('focusin', 50)
                     zoom = True
                 elif event.key == pygame.K_LEFTBRACKET:
-                    send_command('focusout', 50)
+                    cgi.send_command('focusout', 50)
                     zoom = True
                 elif event.key == pygame.K_SPACE:
                     display.fill(white)
@@ -269,7 +298,7 @@ def main():
                     display_size = fullscreen_size if fullscreen else windowed_size
                     display = pygame.display.set_mode(display_size, pygame.FULLSCREEN if fullscreen else pygame.RESIZABLE)
                 if event.key in (pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET, pygame.K_EQUALS, pygame.K_MINUS):
-                    send_command('stop')
+                    cgi.send_command('stop')
                     zoom = False
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
@@ -278,13 +307,13 @@ def main():
                     
             elif event.type == pygame.JOYBUTTONDOWN:
                 if joystick.get_button(ZOOM_IN):
-                    send_command('zoomin', 0)
+                    cgi.send_command('zoomin', 0)
                 if joystick.get_button(ZOOM_OUT):
-                    send_command('zoomout', 0)
+                    cgi.send_command('zoomout', 0)
                 if joystick.get_button(FOCUS_IN):
-                    send_command('focusin', 0)
+                    cgi.send_command('focusin', 0)
                 if joystick.get_button(FOCUS_OUT):
-                    send_command('focusout', 0)
+                    cgi.send_command('focusout', 0)
                 if joystick.get_button(SNAPSHOT):
                     if not snapshot_held:
                         display.fill(white)
@@ -301,7 +330,7 @@ def main():
             elif event.type == pygame.JOYBUTTONUP:
                 if not joystick.get_button(IR_TOGGLE):
                     ir_toggling = False
-                send_command('stop')
+                cgi.send_command('stop')
                 last_hspeed = last_vspeed = 0
                 if not joystick.get_button(SNAPSHOT):
                     snapshot_held = False
@@ -310,22 +339,25 @@ def main():
         hspeed = (max(abs(horizontal) - HORIZONTAL_DEADZONE, 0)/(1 - HORIZONTAL_DEADZONE))**2 * speed_modifier
         vspeed = (max(abs(vertical) - VERTICAL_DEADZONE, 0)/(1 - VERTICAL_DEADZONE))**2 * speed_modifier
         if vspeed <= SPEED_THRESHOLD and hspeed <= SPEED_THRESHOLD and (last_vspeed > SPEED_THRESHOLD or last_hspeed > SPEED_THRESHOLD):
-            send_command('stop')
+            cgi.send_command('stop')
         elif vspeed > SPEED_THRESHOLD and hspeed > SPEED_THRESHOLD:
             if alternate:
                 if alternate_timer <= time.time():
                     alternate = not alternate
                     alternate_timer = time.time() + 0.25
-                send_command('left' if horizontal < 0 else 'right', round(hspeed * 2 * (SPEED_RANGE[1]-SPEED_RANGE[0]) + SPEED_RANGE[0]))
+                cgi.send_command('left' if horizontal < 0 else 'right', round(hspeed * 2 * (SPEED_RANGE[1]-SPEED_RANGE[0]) + SPEED_RANGE[0])
+                )
             else:
                 if alternate_timer <= time.time():
                     alternate = not alternate
                     alternate_timer = time.time() + 0.25
-                send_command('down' if vertical < 0 else 'up', round(vspeed * 2 * (SPEED_RANGE[1]-SPEED_RANGE[0]) + SPEED_RANGE[0]))
+                cgi.send_command('down' if vertical < 0 else 'up', round(vspeed * 2 * (SPEED_RANGE[1]-SPEED_RANGE[0]) + SPEED_RANGE[0]))
         elif vspeed > SPEED_THRESHOLD:
-            send_command('down' if vertical < 0 else 'up', round(vspeed * (SPEED_RANGE[1]-SPEED_RANGE[0]) + SPEED_RANGE[0]))
+            if "onvif" in CONFIG:
+                onvif.continuous_move(hspeed * (-1 if horizontal < 0 else 1), vspeed * (-1 if vertical < 0 else 1), zoom)
+            #cgi.send_command('down' if vertical < 0 else 'up', round(vspeed * (SPEED_RANGE[1]-SPEED_RANGE[0]) + SPEED_RANGE[0]))
         elif hspeed > SPEED_THRESHOLD:
-            send_command('left' if horizontal < 0 else 'right', round(hspeed * (SPEED_RANGE[1]-SPEED_RANGE[0]) + SPEED_RANGE[0]))
+            cgi.send_command('left' if horizontal < 0 else 'right', round(hspeed * (SPEED_RANGE[1]-SPEED_RANGE[0]) + SPEED_RANGE[0]))
         if zoom or hspeed > SPEED_THRESHOLD or vspeed > SPEED_THRESHOLD:
             realtime, shiftrtsp_timer = shift_rtsp(realtime, shiftrtsp_timer)
         if joystick:
@@ -353,15 +385,18 @@ def main():
             # Convert PIL image to pygame surface image
             image = pygame.image.fromstring(data, size, mode)
         else:
-            raw_snapshot = get_snapshot()
+            raw_snapshot = cgi.get_snapshot()
             image = pygame.image.load(io.BytesIO(raw_snapshot))
         image = pygame.transform.scale(image, display_size)
         display.blit(image, (0,0))
 
         if time.time() > processing_timeout and ai_active and processing_image and not local_image_queue.empty():
-            dead_image = local_image_queue.get(False)
+            while not local_image_queue.empty():
+                local_image_queue.get(False)
+            while not image_queue.empty():
+                image_queue.get(False)
             processing_image = False
-            print("AI TImed out")
+            print("AI Timed out")
             ai_active = False
 
         # Display control information
@@ -406,7 +441,8 @@ def main():
 
 def halt(image_process, image_queue, local_image_queue, rtsp_client):
     image_queue.put(None) # send the halt command
-    rtsp_client.close() # Close the rtsp client
+    if rtsp_client:
+        rtsp_client.close() # Close the rtsp client
     time.sleep(0.1)
     if image_process:
         image_process.terminate()
@@ -440,37 +476,11 @@ def speak(text):
     myobj.save("voice.mp3")
     os.system("(ffplay voice.mp3 -autoexit -nodisp -af 'volume=0.1' > /dev/null 2>&1)&")
 
-def send_command(name, speed=1):
-    if speed > SPEED_RANGE[1] - 1:
-        speed = 0 # speed 0 goes faster than max speed
+def queue_snapshot(cgi, image_queue, local_image_queue, high_quality=True):
+    threading.Thread(target=cgi.get_snapshot, args=[high_quality, image_queue, local_image_queue]).start()
 
-    request = f"http://{IP_ADDRESS}/cgi-bin/hi3510/ptzctrl.cgi?-step=0&-act={name}&-speed={int(round(speed))}"
-    return requests.get(request, auth=AUTH)
-
-def ctrl_preset(name):
-    request = f"http://{IP_ADDRESS}/cgi-bin/hi3510/preset.cgi?-act=goto&-number={name}"
-    return requests.get(request, auth=AUTH)
-
-def set_preset(name):
-    request = f"http://{IP_ADDRESS}/cgi-bin/hi3510/preset.cgi?-act=set&-status=1&-number={name}"
-    return requests.get(request, auth=AUTH)
-
-def get_snapshot(high_quality=False, image_queue=None, local_image_queue=None):
-    request = f"http://{IP_ADDRESS}/tmpfs/{'snap' if high_quality else 'auto'}.jpg"
-    response = requests.get(request, auth=AUTH)
-    content = response._content
-    if image_queue != None:
-        if local_image_queue != None:
-            local_image_queue.put(content)
-        image_queue.put(content)
-    else:
-        return response._content
-
-def queue_snapshot(image_queue, local_image_queue, high_quality=True):
-    threading.Thread(target=get_snapshot, args=[high_quality, image_queue, local_image_queue]).start()
-
-def save_hqsnapshot(filename):
-    content = get_snapshot(high_quality=True)
+def save_hqsnapshot(cgi, filename):
+    content = cgi.get_snapshot(high_quality=True)
     with open(filename, "wb") as f:
         f.write(content)
 
@@ -485,37 +495,126 @@ def take_snapshot(rtsp_client=None):
     if rtsp_client:
         threading.Thread(target=save_rtsp_snapshot, args=[rtsp_client, filename]).start()
     else:
-        threading.Thread(target=save_hqsnapshot, args=[filename,]).start()
+        threading.Thread(target=save_hqsnapshot, args=[cgi, filename,]).start()
 
-def toggle_infrared(index):
-    request = f"http://{IP_ADDRESS}/cgi-bin/hi3510/param.cgi?cmd=setinfrared&-infraredstat={infrared[index]}"
-    return requests.get(request, auth=AUTH)
+class CameraControl:
+    def __init__(self, config):
+        self.mode = None
+        if "cgi" in config:
+            self.mode = "cgi"
+        elif "onvif" in config:
+            self.mode = "onvif"
+        self.horizontal = self.vertical = self.zoom = 0
 
-def get_infrared():
-    request = f"http://{IP_ADDRESS}/cgi-bin/hi3510/param.cgi?cmd=getinfrared"
-    return requests.get(request, auth=AUTH)._content.decode("utf8").strip().split("=")[-1][1:-2]
+    def ptz(self):
+        # Pan and Tilt      
+        hspeed = (max(abs(self.horizontal) - HORIZONTAL_DEADZONE, 0)/(1 - HORIZONTAL_DEADZONE))**2 * speed_modifier
+        vspeed = (max(abs(self.vertical) - VERTICAL_DEADZONE, 0)/(1 - VERTICAL_DEADZONE))**2 * speed_modifier
+        if vspeed <= SPEED_THRESHOLD and hspeed <= SPEED_THRESHOLD and (last_vspeed > SPEED_THRESHOLD or last_hspeed > SPEED_THRESHOLD):
+            cgi.send_command('stop')
+        elif vspeed > SPEED_THRESHOLD and hspeed > SPEED_THRESHOLD:
+            if alternate:
+                if alternate_timer <= time.time():
+                    alternate = not alternate
+                    alternate_timer = time.time() + 0.25
+                cgi.send_command('left' if horizontal < 0 else 'right', round(hspeed * 2 * (SPEED_RANGE[1]-SPEED_RANGE[0]) + SPEED_RANGE[0])
+                )
+            else:
+                if alternate_timer <= time.time():
+                    alternate = not alternate
+                    alternate_timer = time.time() + 0.25
+                cgi.send_command('down' if vertical < 0 else 'up', round(vspeed * 2 * (SPEED_RANGE[1]-SPEED_RANGE[0]) + SPEED_RANGE[0]))
+        elif vspeed > SPEED_THRESHOLD:
+            if "onvif" in CONFIG:
+                onvif.continuous_move(hspeed * (-1 if horizontal < 0 else 1), vspeed * (-1 if vertical < 0 else 1), zoom)
+            #cgi.send_command('down' if vertical < 0 else 'up', round(vspeed * (SPEED_RANGE[1]-SPEED_RANGE[0]) + SPEED_RANGE[0]))
+        elif hspeed > SPEED_THRESHOLD:
+            cgi.send_command('left' if horizontal < 0 else 'right', round(hspeed * (SPEED_RANGE[1]-SPEED_RANGE[0]) + SPEED_RANGE[0]))
+        if zoom or hspeed > SPEED_THRESHOLD or vspeed > SPEED_THRESHOLD:
+            realtime, shiftrtsp_timer = shift_rtsp(realtime, shiftrtsp_timer)
+        if joystick:
+            preset = joystick.get_hat(PRESET_HAT)
+            if preset != (0, 0) and preset != last_preset:
+                ctrl_preset(presets.index(preset))
 
-def set_name(name):
-    request = f"http://{IP_ADDRESS}/web/cgi-bin/hi3510/param.cgi?cmd=setoverlayattr&-region=1&-show=1&-name={quote(name)}"
-    return requests.get(request, auth=AUTH)
+        last_vspeed, last_hspeed = vspeed, hspeed
+        last_preset = preset
+        last_speed = speed_modifier
+        
+    def handle_event(self, event, K_LGUI=False, K_CTRL=False, K_SHIFT=False):
+        if event.type == pygame.KEYDOWN
+            if event.key in range(pygame.K_1, pygame.K_9 + 1) and not K_LGUI and is_focused and time.time() - 0.1 > focus_gained:
+                if K_CTRL:
+                    cgi.ctrl_preset(event.key - pygame.K_0)
+                else:
+                    cgi.set_preset(event.key - pygame.K_0)
+                    print(f"Set current frame as hotkey {event.key - pygame.K_0}")
+            elif event.key == pygame.K_LEFT:
+                self.horizontal = -1
+            elif event.key == pygame.K_RIGHT:
+                self.horizontal = 1
+            elif event.key == pygame.K_UP:
+                self.vertical = 1
+            elif event.key == pygame.K_DOWN:
+                self.vertical = -1
+            elif event.key == pygame.K_EQUALS:
+                cgi.send_command('zoomin', 50)
+            elif event.key == pygame.K_MINUS:
+                cgi.send_command('zoomout', 50)
+            elif event.key == pygame.K_RIGHTBRACKET:
+                cgi.send_command('focusin', 50)
+            elif event.key == pygame.K_LEFTBRACKET:
+                cgi.send_command('focusout', 50)
+            elif event.key == pygame.K_SPACE:
+                display.fill(white)
+                pygame.display.update()
+                take_snapshot(rtsp_client)
+            elif event.key == pygame.K_i:
+                infrared_index = (infrared_index + 1) % 3
+                ir_info = myfont.render(f'IR {infrared_symbols[infrared_index]}', False, white)
+                toggle_infrared(infrared_index)
+        elif event.type == pygame.KEYUP:
+            if event.key == pygame.K_LEFT and horizontal == -1:
+                horizontal = 0
+            elif event.key == pygame.K_RIGHT and horizontal == 1:
+                horizontal = 0
+            if event.key == pygame.K_UP and vertical == 1:
+                vertical = 0
+            elif event.key == pygame.K_DOWN and vertical == -1:
+                vertical = 0
+            if event.key in (pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET, pygame.K_EQUALS, pygame.K_MINUS):
+                cgi.send_command('stop')
+                zoom = False
+                
+        elif event.type == pygame.JOYBUTTONDOWN:
+            if joystick.get_button(ZOOM_IN):
+                cgi.send_command('zoomin', 0)
+            if joystick.get_button(ZOOM_OUT):
+                cgi.send_command('zoomout', 0)
+            if joystick.get_button(FOCUS_IN):
+                cgi.send_command('focusin', 0)
+            if joystick.get_button(FOCUS_OUT):
+                cgi.send_command('focusout', 0)
+            if joystick.get_button(SNAPSHOT):
+                if not snapshot_held:
+                    display.fill(white)
+                    pygame.display.update()
+                    take_snapshot(rtsp_client)
+                    snapshot_held = True
+            if joystick.get_button(IR_TOGGLE):
+                if not ir_toggling:
+                    ir_toggling= True
+                    infrared_index = (infrared_index + 1) % 3
+                    ir_info = myfont.render(f'IR {infrared_symbols[infrared_index]}', False, white)
+                    toggle_infrared(infrared_index) 
 
-def set_time():
-    current_time = datetime.now().strftime("%Y.%m.%d.%H.%M.%S")
-    request = f"http://{IP_ADDRESS}/web/cgi-bin/hi3510/param.cgi?cmd=setservertime&-time={current_time}"
-    return requests.get(request, auth=AUTH)
-
-def load_config():
-    request = f"http://{IP_ADDRESS}/web/cgi-bin/hi3510/param.cgi?cmd=getlanguage&cmd=getvideoattr&cmd=getimageattr&cmd=getsetupflag&cmd=getimagemaxsize&cmd=getaudioflag&cmd=getserverinfo&cmd=getvideoattr&cmd=getircutattr&cmd=getinfrared&cmd=getrtmpattr&cmd=gethttpport&cmd=getlampattrex"
-    response = requests.get(request, auth=AUTH)
-    config = {}
-    for line in response._content.decode("utf8").strip().split("\r\n"):
-        k, v = line[4:].split("=")
-        config[k] = v
-    return config
-
-def reboot():
-    request = f"http://{IP_ADDRESS}/cgi-bin/hi3510/param.cgi?cmd=sysreboot"
-    return requests.get(request, auth=AUTH)
+        elif event.type == pygame.JOYBUTTONUP:
+            if not joystick.get_button(IR_TOGGLE):
+                ir_toggling = False
+            cgi.send_command('stop')
+            last_hspeed = last_vspeed = 0
+            if not joystick.get_button(SNAPSHOT):
+                snapshot_held = False
 
 if __name__ == "__main__":
     main()

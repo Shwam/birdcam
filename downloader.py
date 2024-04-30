@@ -165,13 +165,19 @@ def identify_events():
     return events
 
 if __name__ == "__main__":
-    from auth import IP_ADDRESS, AUTH
+    IP_ADDRESS = "192.168.1.120"
+    AUTH = "admin", "admin"
     records = list_records(IP_ADDRESS, AUTH)
-    events = identify_events()
-    print(events)
-    #raccoon0 = datetime.datetime.strptime("230620231100", '%y%m%d%H%M%S')
-    #raccoon1 = datetime.datetime.strptime("230620232100", '%y%m%d%H%M%S')
-    #events = [(raccoon0, raccoon1)]
+    #events = identify_events()
+    #print(events)
+    cat0 = datetime.datetime.strptime("230818014630", '%y%m%d%H%M%S')
+    cat1 = datetime.datetime.strptime("230818015100", '%y%m%d%H%M%S')
+    mouse0 = datetime.datetime.strptime("230821215259", '%y%m%d%H%M%S')
+    mouse1 = datetime.datetime.strptime("230821215500", '%y%m%d%H%M%S')
+    raccoon0 = datetime.datetime.strptime("230824013000", '%y%m%d%H%M%S')
+    raccoon1 = datetime.datetime.strptime("230824014500", '%y%m%d%H%M%S')
+
+    events = [(raccoon0, raccoon1)]
     for event in events:
         clip(*event, IP_ADDRESS, AUTH, records)
  

@@ -4,12 +4,28 @@ import json
 
 def create_config(path):
     config = dict()
-    config["address"] = input("Enter camera IP address: ")
-    config["user"] = input("Enter camera login user name: ")
-    config["password"] = input("Enter camera login password (WARNING: this is saved/sent in plaintext): ")
-    config["image_server"] = input("Enter IP address of image processing server: ")
+    config["address"] = input(f"Enter camera IP Address: ")
+    config["user"] = input("Enter camera username: ")
+    config["password"] = input("Enter camera password (WARNING: this is saved/sent in plaintext): ")
+    config["rtsp"] = f"rtsp://{config['address']}:554/1)"
+    config["cgi"] = dict()
+    config["cgi"]["path"] = input(f"Enter path to cgi controls, e.g. /web/cgi-bin/hi3510/ (leave blank if N/A): ")
+    if config["cgi"]["path"]:
+        config["cgi"]["path"] = os.path.join(f"http://{config['address']}", config['cgi']['path'])
+    else:
+        del config["cgi"] 
+    config["onvif"] = dict()
+    config["onvif"]["port"] = int(input("Enter port number for ONVIF controls, e.g. 8080 (leave blank if N/A): "))
+    if config["onvif"]["port"]:
+        config["onvif"]["port"] = int(config["onvif"]["port"])
+    else:
+        del config["onvif"]
+    config["image_server"] = "localhost"
+
+    if "cgi" not in config and "onvif" not in config:
+        print("Warning: No CGI or ONVIF login provided. Camera control will be disabled.")
     save = input(f"Save these settings to {path}? (Y/n): ")
-    if save[0].lower() == "y":
+    if save == "" or save[0].lower() == "y":
         with open(path, "w") as f:
             f.write(json.dumps(config, indent=4))
     return config
@@ -62,3 +78,7 @@ def save_xml(boxes, path):
 
     with open(path.replace(".jpg", ".xml"), "w") as f:
         f.write(output)
+
+if __name__ == "__main__":
+    create_config("example.config")
+

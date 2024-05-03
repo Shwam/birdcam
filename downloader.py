@@ -176,8 +176,11 @@ if __name__ == "__main__":
     mouse1 = datetime.datetime.strptime("230821215500", '%y%m%d%H%M%S')
     raccoon0 = datetime.datetime.strptime("230824013000", '%y%m%d%H%M%S')
     raccoon1 = datetime.datetime.strptime("230824014500", '%y%m%d%H%M%S')
+     
+    bear0 = datetime.datetime.strptime("240501020800", '%y%m%d%H%M%S')
+    bear1 = datetime.datetime.strptime("240501021000", '%y%m%d%H%M%S')
 
-    events = [(raccoon0, raccoon1)]
+    events = [(bear0, bear1)]
     for event in events:
         clip(*event, IP_ADDRESS, AUTH, records)
  

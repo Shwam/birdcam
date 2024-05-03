@@ -61,6 +61,8 @@ def main():
         print("Could not connect to RTSP, falling back to /tmpfs/auto.jpg")
 
     # Initialize CGI controls
+
+    #camera_control = CameraControl(CONFIG)
     if "cgi" in CONFIG:
         cgi = CGIControl(CONFIG)
 
@@ -136,8 +138,9 @@ def main():
     realtime = False
     bird_sightings = []
 
-    cgi.set_name("birdcam")
-    cgi.set_time()
+    if 'cgi' in CONFIG:
+        cgi.set_name("birdcam")
+        cgi.set_time()
     
     muted = False
     zoom = False
@@ -198,9 +201,10 @@ def main():
                         pass
                             
             else:
-                queue_snapshot(cgi, image_queue, local_image_queue)
-                processing_image = True
-                processing_timeout = time.time() + 10
+                if 'cgi' in CONFIG:
+                    queue_snapshot(cgi, image_queue, local_image_queue)
+                    processing_image = True
+                    processing_timeout = time.time() + 10
 
 
         # Get joystick axes
@@ -211,6 +215,9 @@ def main():
 
         # Get mouse/keyboard events
         for event in pygame.event.get():
+            #if event.type in (pygame.KEYDOWN, pygame.KEYUP) and event.key in (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN, pygame.K_EQUALS, pygame.K_MINUS, pygame.K_RIGHTBRACKET, pygame.K_LEFTBRACKET, pygame.K_SPACE, pygame.K_i, pygame):
+                # process the event via camera control
+                #camera_control.handle_event(event, modifiers) 
             if event.type == pygame.QUIT: # x in titlebar
                 # Tell the client to shut down
                 halt(image_process, image_queue, local_image_queue, rtsp_client)
@@ -221,7 +228,7 @@ def main():
                 is_focused = False
             elif event.type == pygame.KEYDOWN and not K_LGUI:
                 if event.key == pygame.K_LGUI:
-                    K_LGUI = True
+                    modifiers.add("K_LGUI")
                 elif event.key == pygame.K_q:
                     halt(image_process, image_queue, local_image_queue, rtsp_client)
                 elif event.key in range(pygame.K_1, pygame.K_9 + 1) and not K_LGUI and is_focused and time.time() - 0.1 > focus_gained:
@@ -305,35 +312,6 @@ def main():
                 pos = event.pos
                 click_point = pos
                     
-            elif event.type == pygame.JOYBUTTONDOWN:
-                if joystick.get_button(ZOOM_IN):
-                    cgi.send_command('zoomin', 0)
-                if joystick.get_button(ZOOM_OUT):
-                    cgi.send_command('zoomout', 0)
-                if joystick.get_button(FOCUS_IN):
-                    cgi.send_command('focusin', 0)
-                if joystick.get_button(FOCUS_OUT):
-                    cgi.send_command('focusout', 0)
-                if joystick.get_button(SNAPSHOT):
-                    if not snapshot_held:
-                        display.fill(white)
-                        pygame.display.update()
-                        take_snapshot(rtsp_client)
-                        snapshot_held = True
-                if joystick.get_button(IR_TOGGLE):
-                    if not ir_toggling:
-                        ir_toggling= True
-                        infrared_index = (infrared_index + 1) % 3
-                        ir_info = myfont.render(f'IR {infrared_symbols[infrared_index]}', False, white)
-                        toggle_infrared(infrared_index) 
-
-            elif event.type == pygame.JOYBUTTONUP:
-                if not joystick.get_button(IR_TOGGLE):
-                    ir_toggling = False
-                cgi.send_command('stop')
-                last_hspeed = last_vspeed = 0
-                if not joystick.get_button(SNAPSHOT):
-                    snapshot_held = False
         
         # Pan and Tilt      
         hspeed = (max(abs(horizontal) - HORIZONTAL_DEADZONE, 0)/(1 - HORIZONTAL_DEADZONE))**2 * speed_modifier
@@ -498,14 +476,50 @@ def take_snapshot(rtsp_client=None):
         threading.Thread(target=save_hqsnapshot, args=[cgi, filename,]).start()
 
 class CameraControl:
-    def __init__(self, config):
-        self.mode = None
-        if "cgi" in config:
-            self.mode = "cgi"
-        elif "onvif" in config:
-            self.mode = "onvif"
-        self.horizontal = self.vertical = self.zoom = 0
+    # Doesn't handle/track/map control inputs to ptz commands or alternate between p/t/z - just routes the commands you tell it to the proper place 
 
+    def take_snapshot(self):
+        pass
+
+    def ptzf(self, pan=0, tilt=0, zoom=0, focus=0, mode=None):
+        if not mode:
+            if "cgi" in self.config:
+                mode = "cgi"
+            elif "onvif" in self.config:
+                mode = "onvif"
+
+        if mode == "cgi":
+            if pan != 0:
+                self.cgi.send_command('left' if pan < 0 else 'right', round(abs(pan) * 2 * (self.speed_range[1]-self.speed_range[0]) + self.speed_range[0]))
+            if tilt != 0:
+                self.cgi.send_command('down' if tilt < 0 else 'up', round(abs(tilt) * 2 * (self.speed_range[1]-self.speed_range[0]) + self.speed_range[0]))
+            if zoom != 0:
+                if zoom < 0:
+                    cgi.send_command('zoomin', 50)
+                if zoom > 0:
+                    cgi.send_command('zoomout', 50)
+            if focus != 0:
+                if focus < 0:
+                    cgi.send_command('focusin', 50)
+                if focus > 0:
+                    cgi.send_command('focusout', 50)
+            if pan==tilt==zoom==focus==0:
+                cgi.send_command('stop')
+
+        elif mode == "onvif":
+            pass #TODO
+
+    def __init__(self, config):
+        self.config = config
+
+        if "cgi" in config:
+            self.cgi = CGIControl(CONFIG)
+            self.speed_range = (1, 63)
+        elif "onvif" in config:
+            self.onvif = ONVIFControl(CONFIG)
+        
+
+class InputHandler:
     def ptz(self):
         # Pan and Tilt      
         hspeed = (max(abs(self.horizontal) - HORIZONTAL_DEADZONE, 0)/(1 - HORIZONTAL_DEADZONE))**2 * speed_modifier
@@ -542,7 +556,7 @@ class CameraControl:
         last_speed = speed_modifier
         
     def handle_event(self, event, K_LGUI=False, K_CTRL=False, K_SHIFT=False):
-        if event.type == pygame.KEYDOWN
+        if event.type == pygame.KEYDOWN:
             if event.key in range(pygame.K_1, pygame.K_9 + 1) and not K_LGUI and is_focused and time.time() - 0.1 > focus_gained:
                 if K_CTRL:
                     cgi.ctrl_preset(event.key - pygame.K_0)

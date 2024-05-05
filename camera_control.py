@@ -65,22 +65,37 @@ class Camera:
     def get_snapshot(self, high_quality=False, image_queue=None, local_image_queue=None):
         if self.cgi:
             snapshot = self.cgi.get_snapshot(high_quality, image_queue, local_image_queue)
-            image = pygame.image.load(io.BytesIO(snapshot))
-            return image
+            if snapshot:
+                if image_queue != None:
+                   if local_image_queue != None:
+                       local_image_queue.put(snapshot)
+                   print("QUEUED TO AI", type(snapshot))
+                   image_queue.put(snapshot)
+                else:
+                    image = pygame.image.load(io.BytesIO(snapshot))
+                    print("RETURNED TYPE", type(image))
+                    return image
+            return None
         elif self.rtsp:
             snapshot = self.rtsp.read()
+            # Calculate mode, size and data
+            mode = snapshot.mode
+            size = snapshot.size
+            data = snapshot.tobytes()
+              
+            # Convert PIL image to pygame surface image
+            image = pygame.image.fromstring(data, size, mode)
             if image_queue != None:
+                
+                img_byte_arr = io.BytesIO()
+                snapshot.save(img_byte_arr, format='jpeg')
+                image = img_byte_arr.getvalue()
+
                 if local_image_queue != None:
-                    local_image_queue.put(content)
-                image_queue.put(snapshot)
-            else:
-                # Calculate mode, size and data
-                mode = snapshot.mode
-                size = snapshot.size
-                data = snapshot.tobytes()
-                  
-                # Convert PIL image to pygame surface image
-                return pygame.image.fromstring(data, size, mode)
+                    local_image_queue.put(image)
+                image_queue.put(image)
+
+            return image
 
     def queue_snapshot(cam, ai, high_quality=True):
         threading.Thread(target=cam.get_snapshot, args=[high_quality, ai.image_queue, ai.local_image_queue]).start()
@@ -409,6 +424,7 @@ class UI:
             return
         birds_present = 0
         cats_present = 0
+        bears_present = 0
         if boxes:
             ui.bird_boxes = boxes
             ui.box_timer = time.time() + 3
@@ -422,11 +438,13 @@ class UI:
                 x1,y1,x2,y2 = rect
                 if label == "bird":
                     birds_present += 1
-                if label in ("cat", "bear", "dog"):
+                if label in ("cat", "person", "dog"):
                     cats_present += 1
+                if label == "bear" and datetime.now().hour > 21 or datetime.now().hour < 5:
+                    bears_present += 1
 
             # save the detection
-            if birds_present or cats_present:
+            if birds_present or cats_present or bears_present:
                 print(f"DETECTED: {boxes}")
                 if birds_present:
                     with open("sightings.txt", "a") as f:
@@ -434,6 +452,8 @@ class UI:
                     ui.chirp()
                 elif cats_present:
                     ui.chirp("meow.mp3")
+                elif bears_present:
+                    ui.chirp("siren.wav")
                 fpath = "images/" + timestamp + ".jpg"
                 with open(fpath, "wb") as f:
                     f.write(image)
@@ -492,10 +512,9 @@ class AI:
                 except queue.Empty:
                     return ([], None, None)
         else:
-            if cam.cgi:
-                cam.queue_snapshot(ai)
-                ai.processing_image = True
-                ai.processing_timeout = time.time() + 10
+            cam.queue_snapshot(ai)
+            ai.processing_image = True
+            ai.processing_timeout = time.time() + 10
         return boxes, timestamp, image
 
 def main():

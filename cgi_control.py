@@ -3,6 +3,7 @@ from urllib.parse import quote
 from datetime import datetime
 
 class CGIControl:
+    INFRARED = "open", "close", "auto"
     # COMMANDS = ('left', 'right', 'up', 'down', 'home', 'stop', 'zoomin', 'zoomout', 'focusin', 'focusout', 'hscan', 'vscan')
     def __init__(self, config):
         self.address = config["address"]
@@ -35,15 +36,15 @@ class CGIControl:
         request = f"http://{self.address}/tmpfs/{'snap' if high_quality else 'auto'}.jpg"
         response = requests.get(request, auth=self.auth)
         content = response._content
-        if image_queue != None:
-            if local_image_queue != None:
-                local_image_queue.put(content)
-            image_queue.put(content)
-        else:
-            return response._content
+        #if image_queue != None:
+        #    if local_image_queue != None:
+        #        local_image_queue.put(content)
+        #    image_queue.put(content)
+        #else:
+        return content
 
     def toggle_infrared(self, index):
-        request = f"http://{self.address}/cgi-bin/hi3510/param.cgi?cmd=setinfrared&-infraredstat={infrared[index]}"
+        request = f"http://{self.address}/cgi-bin/hi3510/param.cgi?cmd=setinfrared&-infraredstat={CGIControl.INFRARED[index]}"
         return requests.get(request, auth=self.auth)
 
     def get_infrared(self):

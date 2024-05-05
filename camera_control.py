@@ -9,6 +9,7 @@ import itertools
 import time
 import multiprocessing, threading
 import queue
+import PIL
 
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
 import pygame
@@ -24,8 +25,8 @@ class Camera:
     def __init__(self, CONFIG):
         # Initialize CGI controls
         self.cgi = None
-        if "cgi" in CONFIG:
-            self.cgi = CGIControl(CONFIG)
+        #if "cgi" in CONFIG:
+        #   self.cgi = CGIControl(CONFIG)
 
         # Initialize ONVIF controls
         self.onvif = None
@@ -45,26 +46,47 @@ class Camera:
                 print("Could not connect to RTSP, falling back to /tmpfs/auto.jpg")
     
         # Camera movement
-        self.last_hspeed = self.last_vspeed = 0
+        self.last_pan = self.last_tilt = 0
         self.last_speed = 1
         self.preset = (0, 0)
         self.last_preset = (0, 0)
 
         self.horizontal = self.vertical = 0
-        self.hspeed = self.vspeed = 0
+        self.pan = self.tilt = 0
         self.speed_modifier = 0.1
 
         self.alternate = False
         self.alternate_timer = time.time() + 0.25
         
-        self.zoom = False
-        
+        self.zooming = False
+    
+        self.speed_threshold = 0.001
+
+    def get_snapshot(self, high_quality=False, image_queue=None, local_image_queue=None):
+        if self.cgi:
+            snapshot = self.cgi.get_snapshot(high_quality, image_queue, local_image_queue)
+            image = pygame.image.load(io.BytesIO(snapshot))
+            return image
+        elif self.rtsp:
+            snapshot = self.rtsp.read()
+            if image_queue != None:
+                if local_image_queue != None:
+                    local_image_queue.put(content)
+                image_queue.put(snapshot)
+            else:
+                # Calculate mode, size and data
+                mode = snapshot.mode
+                size = snapshot.size
+                data = snapshot.tobytes()
+                  
+                # Convert PIL image to pygame surface image
+                return pygame.image.fromstring(data, size, mode)
 
     def queue_snapshot(cam, ai, high_quality=True):
-        threading.Thread(target=cam.cgi.get_snapshot, args=[high_quality, ai.image_queue, ai.local_image_queue]).start()
+        threading.Thread(target=cam.get_snapshot, args=[high_quality, ai.image_queue, ai.local_image_queue]).start()
 
     def save_hqsnapshot(cam, filename):
-        content = cam.cgi.get_snapshot(high_quality=True)
+        content = cam.get_snapshot(high_quality=True)
         with open(filename, "wb") as f:
             f.write(content)
 
@@ -77,9 +99,9 @@ class Camera:
         filename = "snapshots/" + datetime.now().strftime("%y%m%d%H%M%S.jpg")
 
         if cam.rtsp:
-            threading.Thread(target=cam.save_rtsp_snapshot, args=[cam, filename]).start()
+            threading.Thread(target=cam.save_rtsp_snapshot, args=[filename]).start()
         else:
-            threading.Thread(target=cam.save_hqsnapshot, args=[cam, filename,]).start()
+            threading.Thread(target=cam.save_hqsnapshot, args=[filename,]).start()
     
     def shift_rtsp(self):
         # Temporarily disable rtsp mode
@@ -92,45 +114,92 @@ class Camera:
             cam.shiftrtsp_timer = None
             cam.realtime = False
 
-    def ptz(cam, ui):
+    def ptz(cam):
         # Pan and Tilt      
-        cam.hspeed = abs(cam.horizontal) * cam.speed_modifier
-        cam.vspeed = abs(cam.vertical) * cam.speed_modifier
+        cam.pan = cam.horizontal * cam.speed_modifier
+        cam.tilt = cam.vertical * cam.speed_modifier
         # Stop the camera if input is no longer happening
-        if cam.vspeed <= UI.SPEED_THRESHOLD and cam.hspeed <= UI.SPEED_THRESHOLD and (cam.last_vspeed > UI.SPEED_THRESHOLD or cam.last_hspeed > UI.SPEED_THRESHOLD):
-            cam.cgi.send_command('stop')
+        if abs(cam.tilt) <= cam.speed_threshold and abs(cam.pan) <= cam.speed_threshold and (abs(cam.last_tilt) > cam.speed_threshold or abs(cam.last_pan) > cam.speed_threshold):
+            cam.control_stop()
         # Alternate between pan/tilt
-        elif cam.vspeed > UI.SPEED_THRESHOLD and cam.hspeed > UI.SPEED_THRESHOLD:
+        elif abs(cam.tilt) > cam.speed_threshold and abs(cam.pan) > cam.speed_threshold:
             if cam.alternate:
                 if cam.alternate_timer <= time.time():
                     cam.alternate = not cam.alternate
                     cam.alternate_timer = time.time() + 0.25
-                cam.cgi.send_command('left' if cam.horizontal < 0 else 'right', round(cam.hspeed * 2 * (UI.SPEED_RANGE[1]-UI.SPEED_RANGE[0]) + UI.SPEED_RANGE[0])
-                )
+                if cam.cgi:
+                    cam.cgi.pan(cam.pan)
+                elif cam.onvif:
+                    cam.onvif.continuous_move(cam.pan, 0, 0)
             else:
                 if cam.alternate_timer <= time.time():
                     cam.alternate = not cam.alternate
                     cam.alternate_timer = time.time() + 0.25
-                cam.cgi.send_command('down' if cam.vertical < 0 else 'up', round(cam.vspeed * 2 * (UI.SPEED_RANGE[1]-UI.SPEED_RANGE[0]) + UI.SPEED_RANGE[0]))
+                if cam.cgi:
+                    cam.cgi.tilt(cam.tilt)
+                elif cam.onvif:
+                    cam.onvif.continuous_move(0, cam.tilt, 0)
         # Pan
-        elif cam.hspeed > UI.SPEED_THRESHOLD:
-            cam.cgi.send_command('left' if cam.horizontal < 0 else 'right', round(cam.hspeed * (UI.SPEED_RANGE[1]-UI.SPEED_RANGE[0]) + UI.SPEED_RANGE[0]))
+        elif abs(cam.pan) > cam.speed_threshold:
+            if cam.cgi:
+                cam.cgi.pan(cam.pan)
+            elif cam.onvif:
+                cam.onvif.continuous_move(cam.pan, cam.tilt, cam.zooming)
         # Tilt
-        elif cam.vspeed > UI.SPEED_THRESHOLD:
-            if cam.onvif:
-                cam.onvif.continuous_move(cam.hspeed * (-1 if cam.horizontal < 0 else 1), cam.vspeed * (-1 if cam.vertical < 0 else 1), cam.zoom)
-            elif cam.cgi:
-                cam.cgi.send_command('down' if cam.vertical < 0 else 'up', round(cam.vspeed * (UI.SPEED_RANGE[1]-UI.SPEED_RANGE[0]) + UI.SPEED_RANGE[0]))
+        elif abs(cam.tilt) > cam.speed_threshold:
+            if cam.cgi:
+                cam.cgi.tilt(cam.tilt)
+            elif cam.onvif:
+                cam.onvif.continuous_move(cam.pan, cam.tilt, cam.zooming)
         # Zoom
-        if cam.zoom or cam.hspeed > UI.SPEED_THRESHOLD or cam.vspeed > UI.SPEED_THRESHOLD:
+        if cam.zooming or abs(cam.pan) > cam.speed_threshold or abs(cam.tilt) > cam.speed_threshold:
             cam.shift_rtsp()
 
         # Update velocity
-        cam.last_vspeed, cam.last_hspeed = cam.vspeed, cam.hspeed
+        cam.last_tilt, cam.last_pan = cam.tilt, cam.pan
         cam.last_preset = cam.preset
         cam.last_speed = cam.speed_modifier
-        
+
+    def control_stop(self):
+        if self.cgi:
+            self.cgi.send_command('stop') 
+        elif self.onvif:
+            self.onvif.continuous_move(0, 0, 0)
+   
+    def set_name(cam, name="birdcam"): 
+        if cam.cgi:
+            cam.cgi.set_name(name)
+
+    def set_time(cam):
+        if cam.cgi:
+            cam.cgi.set_time()
+
+    def ctrl_preset(cam, key):
+        if cam.cgi:
+            cam.cgi.ctrl_preset(key)
+        if cam.onvif:
+            print("GO TO PRESET", key)
+            cam.onvif.go_to_preset(key)
+
+    def set_preset(cam, key):
+        if cam.cgi:
+            cam.cgi.set_preset(key)
     
+    def zoom(cam, amount):
+        if cam.cgi:
+            if amount > 0:
+                cam.cgi.send_command('zoomin', 50)
+            elif amount < 0:
+                cam.cgi.send_command('zoomout', 50)
+        elif cam.onvif:
+            cam.onvif.continuous_move(0, 0, amount)
+                    
+    def focus(cam, amount):
+        if amount > 0:
+            cam.cgi.send_command('focusin', 50)
+        elif amount < 0:
+            cam.cgi.send_command('focusout', 50)
+
 class UI:
     # UI Constants
     INFRARED = "open", "close", "auto"
@@ -138,11 +207,6 @@ class UI:
     BLACK = (0,0,0)
     WHITE = (255,255,255)
     PINK = (245, 115, 158)
-
-    HORIZONTAL_DEADZONE = 0.1
-    VERTICAL_DEADZONE = 0.1
-    SPEED_RANGE = (1, 63)
-    SPEED_THRESHOLD = 0.001
 
     def __init__(self, CONFIG, cam):
         # Initialize pygame 
@@ -161,7 +225,7 @@ class UI:
 
         self.show_ui = True
         self.infrared_index = 0
-        if 'cgi' in CONFIG:
+        if cam.cgi:
             self.infrared_index = UI.INFRARED.index(cam.cgi.get_infrared())
         self.ir_info = self.font.render(f'IR {UI.INFRARED_SYMBOLS[self.infrared_index]}', False, UI.WHITE)
         self.GOOD_BIRD = self.font.render(f'good bird', False, UI.PINK)#black)
@@ -170,9 +234,8 @@ class UI:
         self.last_chirp = time.time()
         self.bird_boxes = []
 
-        if cam.cgi:
-            cam.cgi.set_name("birdcam")
-            cam.cgi.set_time()
+        cam.set_name("birdcam")
+        cam.set_time()
         
         self.muted = False
         self.focus_gained = time.time() # Time that the window last gained focus
@@ -204,16 +267,15 @@ class UI:
                     halt(ai, cam)
                 elif event.key in range(pygame.K_1, pygame.K_9 + 1) and not ui.K_LGUI and ui.is_focused and time.time() - 0.1 > ui.focus_gained:
                     if cam.speed_modifier != 0.01:
-                        cam.cgi.ctrl_preset(event.key - pygame.K_0)
+                        cam.ctrl_preset(event.key - pygame.K_0)
                     else:
-                        cam.cgi.set_preset(event.key - pygame.K_0)
+                        cam.set_preset(event.key - pygame.K_0)
                         print(f"Set current frame as hotkey {event.key - pygame.K_0}")
                 elif event.key == pygame.K_LEFT:
                     cam.horizontal = -1
                 elif event.key == pygame.K_RIGHT:
                     cam.horizontal = 1
                 elif event.key == pygame.K_UP:
-                    print("UP!!!!")
                     cam.vertical = 1
                 elif event.key == pygame.K_DOWN:
                     cam.vertical = -1
@@ -225,17 +287,17 @@ class UI:
                     cam.realtime = not cam.realtime
                     cam.shiftrtsp_timer = None
                 elif event.key == pygame.K_EQUALS:
-                    cam.cgi.send_command('zoomin', 50)
-                    cam.zoom = True
+                    cam.zoom(0.5)
+                    cam.zooming = True
                 elif event.key == pygame.K_MINUS:
-                    cam.cgi.send_command('zoomout', 50)
-                    cam.zoom = True
+                    cam.zoom(-0.5)
+                    cam.zooming = True
                 elif event.key == pygame.K_RIGHTBRACKET:
-                    cam.cgi.send_command('focusin', 50)
-                    cam.zoom = True
+                    cam.focus(0.5)
+                    cam.zooming = True
                 elif event.key == pygame.K_LEFTBRACKET:
-                    cam.cgi.send_command('focusout', 50)
-                    cam.zoom = True
+                    cam.focus(-0.5)
+                    cam.zooming = True
                 elif event.key == pygame.K_SPACE:
                     ui.display.fill(UI.WHITE)
                     pygame.display.update()
@@ -243,7 +305,8 @@ class UI:
                 elif event.key == pygame.K_i:
                     ui.infrared_index = (ui.infrared_index + 1) % 3
                     ui.ir_info = ui.font.render(f'IR {UI.INFRARED_SYMBOLS[ui.infrared_index]}', False, UI.WHITE)
-                    toggle_infrared(ui.infrared_index)
+                    if cam.cgi:
+                        cam.cgi.toggle_infrared(ui.infrared_index)
                 elif event.key == pygame.K_u:
                     ui.show_ui = not ui.show_ui
                 elif event.key == pygame.K_LSHIFT:
@@ -277,8 +340,8 @@ class UI:
                     ui.display_size = ui.fullscreen_size if ui.fullscreen else ui.windowed_size
                     ui.display = pygame.display.set_mode(ui.display_size, pygame.FULLSCREEN if ui.fullscreen else pygame.RESIZABLE)
                 if event.key in (pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET, pygame.K_EQUALS, pygame.K_MINUS):
-                    cam.cgi.send_command('stop')
-                    cam.zoom = False
+                    cam.control_stop()
+                    cam.zooming = False
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 pos = event.pos
@@ -335,11 +398,9 @@ class UI:
                 # Convert PIL image to pygame surface image
                 image = pygame.image.fromstring(data, size, mode)
             else:
-                raw_snapshot = cam.cgi.get_snapshot()
-                image = pygame.image.load(io.BytesIO(raw_snapshot))
+                image = cam.get_snapshot()
         else:
-            raw_snapshot = cam.cgi.get_snapshot()
-            image = pygame.image.load(io.BytesIO(raw_snapshot))
+            image = cam.get_snapshot()
         image = pygame.transform.scale(image, ui.display_size)
         ui.display.blit(image, (0,0))
     
@@ -457,17 +518,13 @@ def main():
     while True:
         ui.update_size()
 
-        last = (None,None,None)
-        while True:
-            boxes, timestamp, image = ai.get_detections(cam)
-            if not boxes:
-                break
-            last = (boxes, timestamp, image)
-        ui.process_boxes(*last)
+        # Get detections from the AI
+        boxes, timestamp, image = ai.get_detections(cam)
+        ui.process_boxes(boxes, timestamp, image)
 
+        # Process UI inputs
         ui.handle_input(ai, cam) 
-        
-        cam.ptz(ui)
+        cam.ptz()
 
         # Display the latest image
 

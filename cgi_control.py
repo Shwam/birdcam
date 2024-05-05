@@ -7,11 +7,17 @@ class CGIControl:
     def __init__(self, config):
         self.address = config["address"]
         self.auth = config["user"], config["password"]
+        self.speed_range = config.get("cgi", dict()).get("speed_range", (1, 63))
+
+    def pan(self, amount):
+        self.send_command('left' if amount < 0 else 'right', round(abs(amount) * 2 * (self.speed_range[1]-self.speed_range[0]) + self.speed_range[0]))
+
+    def tilt(self, amount):
+        self.send_command('down' if amount < 0 else 'up', round(abs(amount) * 2 * (self.speed_range[1]-self.speed_range[0]) + self.speed_range[0]))
 
     def send_command(self, name, speed=1):
-        SPEED_RANGE = (1, 63)
         print("Sending command", name)
-        if speed > SPEED_RANGE[1] - 1:
+        if speed > self.speed_range[1] - 1:
             speed = 0 # speed 0 goes faster than max speed
 
         request = f"http://{self.address}/cgi-bin/hi3510/ptzctrl.cgi?-step=0&-act={name}&-speed={int(round(speed))}"

@@ -155,7 +155,7 @@ class ONVIFControl:
         Returns:
             Return onvif's response.
         """
-        presets = CameraControl.get_preset_complete(self)
+        presets = ONVIFControl.get_preset_complete(self)
         request = self.camera_ptz.create_type('SetPreset')
         request.ProfileToken = self.camera_media_profile.token
         request.PresetName = preset_name
@@ -177,7 +177,7 @@ class ONVIFControl:
         Returns:
             Returns a list of tuples with the presets.
         """
-        ptz_get_presets = CameraControl.get_preset_complete(self)
+        ptz_get_presets = ONVIFControl.get_preset_complete(self)
         logging.info('camera_command( get_preset() )')
 
         presets = []
@@ -204,7 +204,7 @@ class ONVIFControl:
         Returns:
             Return onvif's response.
         """
-        presets = CameraControl.get_preset_complete(self)
+        presets = ONVIFControl.get_preset_complete(self)
         request = self.camera_ptz.create_type('RemovePreset')
         request.ProfileToken = self.camera_media_profile.token
         logging.info('camera_command( remove_preset(%s) )', preset_name)
@@ -225,7 +225,8 @@ class ONVIFControl:
         Returns:
             Return onvif's response.
         """
-        presets = CameraControl.get_preset_complete(self)
+        preset_position = f"Preset{str(preset_position).zfill(3)}"
+        presets = self.get_preset_complete()
         request = self.camera_ptz.create_type('GotoPreset')
         request.ProfileToken = self.camera_media_profile.token
         logging.info('camera_command( go_to_preset(%s) )', preset_position)

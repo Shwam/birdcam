@@ -3,6 +3,7 @@ from urllib.parse import quote
 from datetime import datetime
 
 class CGIControl:
+    # COMMANDS = ('left', 'right', 'up', 'down', 'home', 'stop', 'zoomin', 'zoomout', 'focusin', 'focusout', 'hscan', 'vscan')
     def __init__(self, config):
         self.address = config["address"]
         self.auth = config["user"], config["password"]

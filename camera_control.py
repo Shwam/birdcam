@@ -34,6 +34,8 @@ class Camera:
 
         # Initialize RTSP
         self.rtsp = None
+        self.realtime = False
+        self.shiftrtsp_timer = None
         if "rtsp" in CONFIG:
             self.rtsp = rtsp.Client(rtsp_server_uri = CONFIG["rtsp"])
             if self.rtsp.isOpened():
@@ -54,6 +56,9 @@ class Camera:
 
         self.alternate = False
         self.alternate_timer = time.time() + 0.25
+        
+        self.zoom = False
+        
 
     def queue_snapshot(cam, ai, high_quality=True):
         threading.Thread(target=cam.cgi.get_snapshot, args=[high_quality, ai.image_queue, ai.local_image_queue]).start()
@@ -75,13 +80,26 @@ class Camera:
             threading.Thread(target=cam.save_rtsp_snapshot, args=[cam, filename]).start()
         else:
             threading.Thread(target=cam.save_hqsnapshot, args=[cam, filename,]).start()
+    
+    def shift_rtsp(self):
+        # Temporarily disable rtsp mode
+        if self.realtime == False or self.shiftrtsp_timer != None: 
+            self.shiftrtsp_timer = time.time() + 2
+            self.realtime = True
+
+    def restore_rtsp(cam):
+        if cam.shiftrtsp_timer != None and time.time() > cam.shiftrtsp_timer:
+            cam.shiftrtsp_timer = None
+            cam.realtime = False
 
     def ptz(cam, ui):
         # Pan and Tilt      
-        cam.hspeed = (max(abs(cam.horizontal) - UI.HORIZONTAL_DEADZONE, 0)/(1 - UI.HORIZONTAL_DEADZONE))**2 * cam.speed_modifier
-        cam.vspeed = (max(abs(cam.vertical) - UI.VERTICAL_DEADZONE, 0)/(1 - UI.VERTICAL_DEADZONE))**2 * cam.speed_modifier
+        cam.hspeed = abs(cam.horizontal) * cam.speed_modifier
+        cam.vspeed = abs(cam.vertical) * cam.speed_modifier
+        # Stop the camera if input is no longer happening
         if cam.vspeed <= UI.SPEED_THRESHOLD and cam.hspeed <= UI.SPEED_THRESHOLD and (cam.last_vspeed > UI.SPEED_THRESHOLD or cam.last_hspeed > UI.SPEED_THRESHOLD):
             cam.cgi.send_command('stop')
+        # Alternate between pan/tilt
         elif cam.vspeed > UI.SPEED_THRESHOLD and cam.hspeed > UI.SPEED_THRESHOLD:
             if cam.alternate:
                 if cam.alternate_timer <= time.time():
@@ -94,15 +112,20 @@ class Camera:
                     cam.alternate = not cam.alternate
                     cam.alternate_timer = time.time() + 0.25
                 cam.cgi.send_command('down' if cam.vertical < 0 else 'up', round(cam.vspeed * 2 * (UI.SPEED_RANGE[1]-UI.SPEED_RANGE[0]) + UI.SPEED_RANGE[0]))
-        elif cam.vspeed > UI.SPEED_THRESHOLD:
-            if cam.onvif:
-                cam.onvif.continuous_move(cam.hspeed * (-1 if cam.horizontal < 0 else 1), cam.vspeed * (-1 if cam.vertical < 0 else 1), ui.zoom)
-            #cam.cgi.send_command('down' if cam.vertical < 0 else 'up', round(cam.vspeed * (UI.SPEED_RANGE[1]-UI.SPEED_RANGE[0]) + UI.SPEED_RANGE[0]))
+        # Pan
         elif cam.hspeed > UI.SPEED_THRESHOLD:
             cam.cgi.send_command('left' if cam.horizontal < 0 else 'right', round(cam.hspeed * (UI.SPEED_RANGE[1]-UI.SPEED_RANGE[0]) + UI.SPEED_RANGE[0]))
-        if ui.zoom or cam.hspeed > UI.SPEED_THRESHOLD or cam.vspeed > UI.SPEED_THRESHOLD:
-            ui.shift_rtsp()
+        # Tilt
+        elif cam.vspeed > UI.SPEED_THRESHOLD:
+            if cam.onvif:
+                cam.onvif.continuous_move(cam.hspeed * (-1 if cam.horizontal < 0 else 1), cam.vspeed * (-1 if cam.vertical < 0 else 1), cam.zoom)
+            elif cam.cgi:
+                cam.cgi.send_command('down' if cam.vertical < 0 else 'up', round(cam.vspeed * (UI.SPEED_RANGE[1]-UI.SPEED_RANGE[0]) + UI.SPEED_RANGE[0]))
+        # Zoom
+        if cam.zoom or cam.hspeed > UI.SPEED_THRESHOLD or cam.vspeed > UI.SPEED_THRESHOLD:
+            cam.shift_rtsp()
 
+        # Update velocity
         cam.last_vspeed, cam.last_hspeed = cam.vspeed, cam.hspeed
         cam.last_preset = cam.preset
         cam.last_speed = cam.speed_modifier
@@ -110,8 +133,6 @@ class Camera:
     
 class UI:
     # UI Constants
-    # COMMANDS = ('left', 'right', 'up', 'down', 'home', 'stop', 'zoomin', 'zoomout', 'focusin', 'focusout', 'hscan', 'vscan')
-    # PRESETS = ((0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1), (-1, 0), (-1, 1))
     INFRARED = "open", "close", "auto"
     INFRARED_SYMBOLS = "●", "○", "◐"
     BLACK = (0,0,0)
@@ -143,28 +164,22 @@ class UI:
         if 'cgi' in CONFIG:
             self.infrared_index = UI.INFRARED.index(cam.cgi.get_infrared())
         self.ir_info = self.font.render(f'IR {UI.INFRARED_SYMBOLS[self.infrared_index]}', False, UI.WHITE)
-        self.box_timer = time.time()
         self.GOOD_BIRD = self.font.render(f'good bird', False, UI.PINK)#black)
+        self.audio_info = self.font.render(f'Muted', False, UI.WHITE)
+        self.box_timer = time.time()
         self.last_chirp = time.time()
-        self.realtime = False
+        self.bird_boxes = []
 
         if cam.cgi:
             cam.cgi.set_name("birdcam")
             cam.cgi.set_time()
         
         self.muted = False
-        self.zoom = False
-        self.shiftrtsp_timer = None
         self.focus_gained = time.time() # Time that the window last gained focus
         self.is_focused = False
         self.spinner = itertools.cycle('◴'*3 + '◷'*3 + '◶'*3 + '◵'*3)
         self.K_LGUI = False
-
-    def shift_rtsp(self):
-        if self.realtime == False or self.shiftrtsp_timer != None: 
-            self.shiftrtsp_timer = time.time() + 2
-            self.realtime = True
-    
+ 
     def update_size(ui):
         ui.display_size = pygame.display.get_surface().get_size()
         
@@ -198,6 +213,7 @@ class UI:
                 elif event.key == pygame.K_RIGHT:
                     cam.horizontal = 1
                 elif event.key == pygame.K_UP:
+                    print("UP!!!!")
                     cam.vertical = 1
                 elif event.key == pygame.K_DOWN:
                     cam.vertical = -1
@@ -206,20 +222,20 @@ class UI:
                     if ai.active:
                         ai.processing_timeout = time.time() + 10
                 elif event.key == pygame.K_r:
-                    ui.realtime = not ui.realtime
-                    ui.shiftrtsp_timer = None
+                    cam.realtime = not cam.realtime
+                    cam.shiftrtsp_timer = None
                 elif event.key == pygame.K_EQUALS:
                     cam.cgi.send_command('zoomin', 50)
-                    ui.zoom = True
+                    cam.zoom = True
                 elif event.key == pygame.K_MINUS:
                     cam.cgi.send_command('zoomout', 50)
-                    ui.zoom = True
+                    cam.zoom = True
                 elif event.key == pygame.K_RIGHTBRACKET:
                     cam.cgi.send_command('focusin', 50)
-                    ui.zoom = True
+                    cam.zoom = True
                 elif event.key == pygame.K_LEFTBRACKET:
                     cam.cgi.send_command('focusout', 50)
-                    ui.zoom = True
+                    cam.zoom = True
                 elif event.key == pygame.K_SPACE:
                     ui.display.fill(UI.WHITE)
                     pygame.display.update()
@@ -262,25 +278,21 @@ class UI:
                     ui.display = pygame.display.set_mode(ui.display_size, pygame.FULLSCREEN if ui.fullscreen else pygame.RESIZABLE)
                 if event.key in (pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET, pygame.K_EQUALS, pygame.K_MINUS):
                     cam.cgi.send_command('stop')
-                    ui.zoom = False
+                    cam.zoom = False
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 pos = event.pos
                 ui.click_point = pos
 
-    def draw_overlay(ui, ai):
+    def draw_overlay(ui):
         # Display control information
         if ui.show_ui:
             # Overlay
             overlay = pygame.Surface((100,(90 if ui.muted else 60)), pygame.SRCALPHA) 
             overlay.fill((0,0,0))
-            
-            ai_info = ui.font.render(f'AI {"◙" if time.time() > ai.processing_timeout and ai.active and ai.processing_image else next(ui.spinner) if ai.processing_image and ai.active else "●" if ai.active else "○"}', False,  UI.WHITE)
-            
-            audio_info = ui.font.render(f'Muted', False, UI.WHITE)
-     
+             
             overlay.blit(ui.ir_info, (0,0))
-            overlay.blit(ai_info, (0,30))
+            overlay.blit(ui.ai_info, (0,30))
             if ui.muted:
                 overlay.blit(audio_info, (0, 60))
             overlay.set_alpha(110)
@@ -291,7 +303,7 @@ class UI:
 
             if ui.click_point:
                 pygame.draw.circle(ui.display, (255,0,0), ui.click_point, 3, 3)
-            for box in ai.bird_boxes:
+            for box in ui.bird_boxes:
                 label, confidence, rect = box
                 x,y,w,h = rect
                 scale = (ui.display_size[0], ui.display_size[1])
@@ -300,21 +312,19 @@ class UI:
                 if label == "bird":
                     ui.display.blit(ui.GOOD_BIRD, (rect[0], rect[1]))
                 else:
-                    print(label)
+                    pass
             
-            if ai.bird_boxes and time.time() > ui.box_timer:
-                ai.bird_boxes = []
+            if ui.bird_boxes and time.time() > ui.box_timer:
+                ui.bird_boxes = []
 
         # Update the screen
         pygame.display.update()
         ui.display.fill(UI.BLACK)
 
-    def view(ui, cam):
-        if ui.shiftrtsp_timer != None and time.time() > ui.shiftrtsp_timer:
-            ui.shiftrtsp_timer = None
-            ui.realtime = False
+    def display_feed(ui, cam):
+        cam.restore_rtsp()
 
-        if not ui.realtime and cam.rtsp:
+        if not cam.realtime and cam.rtsp:
             image = cam.rtsp.read()
             if image:
                 # Calculate mode, size and data
@@ -332,16 +342,50 @@ class UI:
             image = pygame.image.load(io.BytesIO(raw_snapshot))
         image = pygame.transform.scale(image, ui.display_size)
         ui.display.blit(image, (0,0))
+    
+    def process_boxes(ui, boxes, timestamp, image):
+        if not boxes:
+            return
+        birds_present = 0
+        cats_present = 0
+        if boxes:
+            ui.bird_boxes = boxes
+            ui.box_timer = time.time() + 3
+            # find the birds
+            for b in boxes:
+                label, confidence, rect = b
+                if not ui.muted and confidence > 0.9:
+                    if label not in ("chair", "cake", "fire hydrant", "bird", "frisbee", "bowl", "spoon"):
+                        ui.speak(label.replace("person", "intruder"))
+                        print(label)
+                x1,y1,x2,y2 = rect
+                if label == "bird":
+                    birds_present += 1
+                if label in ("cat", "bear", "dog"):
+                    cats_present += 1
 
-    def chirp(self):
-        subprocess.Popen(['ffplay', 'chirp.wav', '-nodisp', '-autoexit'],
+            # save the detection
+            if birds_present or cats_present:
+                print(f"DETECTED: {boxes}")
+                if birds_present:
+                    with open("sightings.txt", "a") as f:
+                        f.write(f"{timestamp}\t{birds_present}\n")
+                    ui.chirp()
+                elif cats_present:
+                    ui.chirp("meow.mp3")
+                fpath = "images/" + timestamp + ".jpg"
+                with open(fpath, "wb") as f:
+                    f.write(image)
+                util.save_xml(boxes, fpath)
+
+                        
+
+    def chirp(self, chirp_type="chirp.wav"):
+        if time.time() > self.last_chirp:
+            subprocess.Popen(['ffplay', chirp_type, '-nodisp', '-autoexit'],
                              stdout=subprocess.PIPE, 
                              stderr=subprocess.PIPE)
-
-    def meow(self):
-        subprocess.Popen(['ffplay', 'meow.mp3', '-nodisp', '-autoexit'],
-                             stdout=subprocess.PIPE, 
-                             stderr=subprocess.PIPE)
+        self.last_chirp = time.time() + 360
 
     def speak(self, text):  
         myobj = gTTS(text=text, lang="en", slow=False)
@@ -350,72 +394,17 @@ class UI:
         os.system("(ffplay voice.mp3 -autoexit -nodisp -af 'volume=0.1' > /dev/null 2>&1)&")
 
 class AI:
-    def __init__(self):
+    def __init__(self, CONFIG):
         self.active = True
         self.processing_image = False
         self.image_queue = multiprocessing.Queue()
         self.local_image_queue = multiprocessing.Queue() # keep track of what's been sent
         self.boxes = multiprocessing.Queue()
-        client = DarknetClient('localhost', 7061, self.image_queue, self.boxes)
+        client = DarknetClient(CONFIG.get("image_server", "localhost"), CONFIG.get("image_server_port", 7061), self.image_queue, self.boxes)
         self.image_process = multiprocessing.Process(target = DarknetClient.run, args=[client,])
         self.image_process.start()
 
         self.processing_timeout = time.time() + 60
-        self.bird_boxes = []
-
-    def process(ai, ui, cam):
-        # Send images / receive bounds
-        if not ai.active:
-            return False
-
-        if ai.processing_image:
-            if not ai.boxes.empty():
-                timestamp, box = ai.boxes.get(False)
-                birds_present = 0
-                cats_present = 0
-                if box:
-                    ai.bird_boxes = box
-                    ui.box_timer = time.time() + 3
-                    # find the birds
-                    for b in box:
-                        label, confidence, rect = b
-                        if not ui.muted and confidence > 0.9:
-                            if label not in ("chair", "cake", "fire hydrant", "bird", "frisbee", "bowl", "spoon"):
-                                ui.speak(label.replace("person", "intruder"))
-                        x1,y1,x2,y2 = rect
-                        if label == "bird":
-                            birds_present += 1
-                        if label in ("cat", "bear", "dog"):
-                            cats_present += 1
-                try:
-                    image = ai.local_image_queue.get(False)
-
-                    # save the detection
-                    if birds_present or cats_present:
-                        print(f"DETECTED: {box}")
-                        if birds_present:
-                            with open("sightings.txt", "a") as f:
-                                f.write(f"{timestamp}\t{birds_present}\n")
-                        if time.time() > ui.last_chirp:
-                            if birds_present:
-                                ui.chirp()
-                            elif cats_present:
-                                ui.meow()
-                        ui.last_chirp = time.time() + 360
-                        fpath = "images/" + timestamp + ".jpg"
-                        with open(fpath, "wb") as f:
-                            f.write(image)
-                        util.save_xml(box, fpath)
-
-                    ai.processing_image = False
-                except queue.Empty:
-                    pass
-                        
-        else:
-            if cam.cgi:
-                cam.queue_snapshot(ai)
-                ai.processing_image = True
-                ai.processing_timeout = time.time() + 10
 
     def check_status(ai):
         if time.time() > ai.processing_timeout and ai.active and ai.processing_image and not ai.local_image_queue.empty():
@@ -426,6 +415,27 @@ class AI:
             ai.processing_image = False
             print("AI Timed out")
             ai.active = False
+
+    def get_detections(ai, cam):
+        boxes = []
+        timestamp = None
+        image = None
+        if not ai.active:
+            return boxes, timestamp, image
+        if ai.processing_image:
+            if not ai.boxes.empty():
+                timestamp, boxes = ai.boxes.get(False)
+                try:
+                    image = ai.local_image_queue.get(False)
+                    ai.processing_image = False
+                except queue.Empty:
+                    return ([], None, None)
+        else:
+            if cam.cgi:
+                cam.queue_snapshot(ai)
+                ai.processing_image = True
+                ai.processing_timeout = time.time() + 10
+        return boxes, timestamp, image
 
 def main():
     # Load configuration settings    
@@ -440,14 +450,20 @@ def main():
     ui = UI(CONFIG, cam)
     
     # Initialize image processing
-    ai = AI()   
+    ai = AI(CONFIG)   
  
     # Information display
 
     while True:
         ui.update_size()
 
-        ai.process(ui, cam)
+        last = (None,None,None)
+        while True:
+            boxes, timestamp, image = ai.get_detections(cam)
+            if not boxes:
+                break
+            last = (boxes, timestamp, image)
+        ui.process_boxes(*last)
 
         ui.handle_input(ai, cam) 
         
@@ -455,13 +471,13 @@ def main():
 
         # Display the latest image
 
-        ui.view(cam)
+        ui.display_feed(cam)
 
         ai.check_status()
+        
+        ui.ai_info = ui.font.render(f'AI {"◙" if time.time() > ai.processing_timeout and ai.active and ai.processing_image else next(ui.spinner) if ai.processing_image and ai.active else "●" if ai.active else "○"}', False,  UI.WHITE)
 
-        ui.draw_overlay(ai)
-
-
+        ui.draw_overlay()
 
 def halt(ai, cam):
     ai.image_queue.put(None) # send the halt command

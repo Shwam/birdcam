@@ -1,11 +1,15 @@
-from onvif_control import ONVIFControl
-from cgi_control import CGIControl
 import rtsp
 import time
 from datetime import datetime
 import threading
 import pygame
 import io
+
+import cv2
+import numpy as np
+
+from onvif_control import ONVIFControl
+from cgi_control import CGIControl
 
 class Camera:
     def __init__(self, CONFIG):
@@ -45,8 +49,8 @@ class Camera:
         self.speed_threshold = 0.001
 
 
-    def get_snapshot(self, high_quality=False, image_queue=None, local_image_queue=None):
-        if self.rtsp and not (self.realtime and self.cgi):
+    def get_snapshot(self, high_quality=False, image_queue=None, local_image_queue=None, mode=None):
+        if self.rtsp and (mode == "rtsp" or not (self.realtime and self.cgi)):
             snapshot = self.rtsp.read()
               
             if image_queue != None and local_image_queue != None:
@@ -104,8 +108,12 @@ class Camera:
 
     def restore_rtsp(cam):
         if cam.shiftrtsp_timer != None and time.time() > cam.shiftrtsp_timer:
-            cam.shiftrtsp_timer = None
-            cam.realtime = False
+            if cam.rtsp_equals_snapshot():
+                cam.shiftrtsp_timer = None
+                cam.realtime = False
+            else:
+                # give it some more time
+                cam.shiftrtsp_timer = time.time() + 0.1
 
     def check_connection(self):
         # Reconnect to any services that have been lost
@@ -121,6 +129,50 @@ class Camera:
         else:
             self.rtsp = None
             print("Could not connect to RTSP")
+
+    def rtsp_equals_snapshot(self):
+        # compare whether the current rtsp image roughly matches the snapshot
+        current_rtsp = self.get_snapshot(mode="rtsp")
+        current_snapshot = self.get_snapshot(mode="snapshot")
+        
+        view = pygame.surfarray.array3d(current_rtsp)
+        view = view.transpose([1, 0, 2])
+        img_rtsp = cv2.cvtColor(view, cv2.COLOR_RGB2BGR)
+        
+        view = pygame.surfarray.array3d(current_snapshot)
+        view = view.transpose([1, 0, 2])
+        img_snapshot = cv2.cvtColor(view, cv2.COLOR_RGB2BGR)
+
+        # make them the same size
+        """h1, w1, _ = img_rtsp.shape
+        h2, w2, _ = img_snapshot.shape
+        h, w = (min(h1,h2), min(w1,w2))
+        if (h1,w1) != (h,w):
+            img_rtsp = cv2.resize(img_rtsp, (w,h))
+        if(h2, w2) != (h,w):
+            img_snapshot = cv2.resize(img_snapshot, (w,h))"""
+        
+ 
+        hist = self.hist(img_rtsp, img_snapshot)
+        print(hist)
+        return (hist < 0.2) 
+
+    def hist(self, img1, img2):        
+        h_bins = 50
+        s_bins = 60
+        histSize = [h_bins, s_bins]
+        # hue varies from 0 to 179, saturation from 0 to 255
+        h_ranges = [0, 180]
+        s_ranges = [0, 256]
+        ranges = h_ranges + s_ranges # concat lists
+        # Use the 0-th and 1-st channels
+        channels = [0, 1]
+
+        hist1 = cv2.calcHist([img1], channels, None, histSize, ranges, accumulate=False)
+        hist2 = cv2.calcHist([img2], channels, None, histSize, ranges, accumulate=False)
+        cv2.normalize(hist1, hist1, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
+        cv2.normalize(hist2, hist2, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
+        return cv2.compareHist(hist1, hist2, 3)
 
     def ptz(cam):
         # Pan and Tilt      

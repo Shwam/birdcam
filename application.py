@@ -200,20 +200,8 @@ class UI:
     def display_feed(ui, cam):
         cam.restore_rtsp()
 
-        if not cam.realtime and cam.rtsp:
-            image = cam.rtsp.read()
-            if image:
-                # Calculate mode, size and data
-                mode = image.mode
-                size = image.size
-                data = image.tobytes()
-                  
-                # Convert PIL image to pygame surface image
-                image = pygame.image.fromstring(data, size, mode)
-            else:
-                image = cam.get_snapshot()
-        else:
-            image = cam.get_snapshot()
+        image = cam.get_snapshot()
+        
         image = pygame.transform.scale(image, ui.display_size)
         ui.display.blit(image, (0,0))
     
@@ -269,24 +257,7 @@ class UI:
         myobj.save("audio/voice.mp3")
         os.system("(ffplay audio/voice.mp3 -autoexit -nodisp -af 'volume=0.1' > /dev/null 2>&1)&")
 
-def main():
-    # Load configuration settings    
-    CONFIG = None
-    if len(sys.argv) > 1:
-        CONFIG = util.load_config(sys.argv[1])
-    else:
-        CONFIG = util.load_config(".config")
-    
-    cam = Camera(CONFIG)
-
-    ui = UI(CONFIG, cam)
-    
-    # Initialize image processing
-    ai = AI(CONFIG)   
- 
-    # Information display
-
-    while True:
+    def run(ui, ai, cam):
         ui.update_size()
 
         # Get detections from the AI
@@ -301,9 +272,33 @@ def main():
         ui.display_feed(cam)
 
         # Display overlay/status
-        ai.check_status()
         ui.ai_info = ui.font.render(f'AI {"◙" if time.time() > ai.processing_timeout and ai.active and ai.processing_image else next(ui.spinner) if ai.processing_image and ai.active else "●" if ai.active else "○"}', False,  UI.WHITE)
         ui.draw_overlay()
+
+        # Ensure the connections are still alive
+        cam.check_connection()
+        ai.check_connection()
+
+
+def main():
+    # Load configuration settings    
+    CONFIG = None
+    if len(sys.argv) > 1:
+        CONFIG = util.load_config(sys.argv[1])
+    else:
+        CONFIG = util.load_config(".config")
+    
+    cam = Camera(CONFIG)
+    ui = UI(CONFIG, cam) 
+    ai = AI(CONFIG)   
+ 
+    # Main UI Loop
+    while True:
+        try:
+            ui.run(ai, cam)
+        except KeyboardInterrupt as e:
+            halt(ai, cam)
+            break
 
 def halt(ai, cam):
     ai.image_queue.put(None) # send the halt command

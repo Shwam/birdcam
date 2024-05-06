@@ -21,16 +21,12 @@ class Camera:
 
         # Initialize RTSP
         self.rtsp = None
+        self.rtsp_server_uri = CONFIG.get("rtsp", None)
         self.realtime = False
         self.shiftrtsp_timer = None
         if "rtsp" in CONFIG:
-            self.rtsp = rtsp.Client(rtsp_server_uri = CONFIG["rtsp"])
-            if self.rtsp.isOpened():
-                print(f"Connected to RTSP client {CONFIG['rtsp']}")
-            else:
-                self.rtsp = None
-                print("Could not connect to RTSP, falling back to /tmpfs/auto.jpg")
-    
+            self.connect_rtsp()
+ 
         # Camera movement
         self.last_pan = self.last_tilt = 0
         self.last_speed = 1
@@ -50,16 +46,7 @@ class Camera:
 
 
     def get_snapshot(self, high_quality=False, image_queue=None, local_image_queue=None):
-        if self.cgi:
-            snapshot = self.cgi.get_snapshot(high_quality, image_queue, local_image_queue)
-
-            if image_queue != None and local_image_queue != None:
-                local_image_queue.put(snapshot)
-                image_queue.put(snapshot)
-            else:
-                image = pygame.image.load(io.BytesIO(snapshot))
-                return image
-        elif self.rtsp:
+        if self.rtsp and not (self.realtime and self.cgi):
             snapshot = self.rtsp.read()
               
             if image_queue != None and local_image_queue != None:
@@ -78,6 +65,15 @@ class Camera:
                 data = snapshot.tobytes()
                 pygame_image = pygame.image.fromstring(data, size, mode)
                 return pygame_image
+        elif self.cgi:
+            snapshot = self.cgi.get_snapshot(high_quality, image_queue, local_image_queue)
+
+            if image_queue != None and local_image_queue != None:
+                local_image_queue.put(snapshot)
+                image_queue.put(snapshot)
+            else:
+                image = pygame.image.load(io.BytesIO(snapshot))
+                return image
 
     def queue_snapshot(cam, ai, high_quality=True):
         threading.Thread(target=cam.get_snapshot, args=[high_quality, ai.image_queue, ai.local_image_queue]).start()
@@ -101,7 +97,7 @@ class Camera:
             threading.Thread(target=cam.save_hqsnapshot, args=[filename,]).start()
     
     def shift_rtsp(self):
-        # Temporarily disable rtsp mode
+        # Temporarily disable rtsp mode.
         if self.realtime == False or self.shiftrtsp_timer != None: 
             self.shiftrtsp_timer = time.time() + 2
             self.realtime = True
@@ -110,6 +106,21 @@ class Camera:
         if cam.shiftrtsp_timer != None and time.time() > cam.shiftrtsp_timer:
             cam.shiftrtsp_timer = None
             cam.realtime = False
+
+    def check_connection(self):
+        # Reconnect to any services that have been lost
+        if self.rtsp:
+            if not self.rtsp.isOpened():
+                print("Detected RTSP failure. Reconnecting")
+                self.connect_rtsp()
+
+    def connect_rtsp(self):
+        self.rtsp = rtsp.Client(rtsp_server_uri = self.rtsp_server_uri)
+        if self.rtsp.isOpened():
+            print(f"Connected to RTSP client")
+        else:
+            self.rtsp = None
+            print("Could not connect to RTSP")
 
     def ptz(cam):
         # Pan and Tilt      

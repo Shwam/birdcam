@@ -17,12 +17,16 @@ class AI:
         self.processing_timeout = time.time() + 60
         self.retry_timer = None
 
-    def check_status(ai):
+    def check_connection(ai):
         # Checks for timeouts
         if time.time() > ai.processing_timeout and ai.active and ai.processing_image and not ai.local_image_queue.empty():
             # Clear out the queues
+            
             while not ai.image_queue.empty():
-                ai.image_queue.get(False)
+                try:
+                    ai.image_queue.get(False)
+                except Exception as err:
+                    pass
             while not ai.local_image_queue.empty():
                 ai.local_image_queue.get(False)
             ai.processing_image = False

@@ -5,10 +5,10 @@ Real-time bird detection, classification, and tracking for an IP PTZ camera
 
 
 ## Usage
-First, set the environment variables `BIRDCAM_USER` and `BIRDCAM_PASS` to your IP Camera's web login credentials. 
-The web CGI uses HTTP Basic Authentication, meaning **your credentials will be sent unencrypted**.
+First, start the darknet server `./service.sh` 
+Then run `python application.py`, which will walk you through config generation and start the camera control service.
 
-### camera_control.py
+### application.py
 - arrow keys: Pan and tilt 
 - +/-: zoom
 - brackets: focus

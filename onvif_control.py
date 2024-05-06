@@ -1,9 +1,6 @@
 import logging
+import onvif
 from onvif import ONVIFCamera
-
-def example_ptz_zoom(ip, user, password):
-    ptz_cam = ONVIFControl({"onvif":{"address":ip, "user":user, "password":password}})
-    ptz_cam.absolute_move(0.0, 0.0, 1)   ## ( Pan, Tilt, Zoom )
 
 class ONVIFControl:
     def __init__(self, config):
@@ -27,19 +24,13 @@ class ONVIFControl:
         Returns:
             Return the ptz service object and media service object
         """
-        mycam = ONVIFCamera(self.__cam_ip, self.__cam_port, self.__cam_user, self.__cam_password)  ## Some cameras use port 8080
-        logging.info('Create media service object')
-        media = mycam.create_media_service()
-        logging.info('Create ptz service object')
-        ptz = mycam.create_ptz_service()
-        logging.info('Get target profile')
-        media_profile = media.GetProfiles()[0]
-        logging.info('Camera working!')
-
-        self.mycam = mycam
-        self.camera_ptz = ptz
-        self.camera_media_profile = media_profile
-        self.camera_media = media
+        self.mycam = ONVIFCamera(self.__cam_ip, self.__cam_port, self.__cam_user, self.__cam_password)  ## Some cameras use port 8080
+        self.camera_media = self.mycam.create_media_service()
+        self.camera_ptz = self.mycam.create_ptz_service()
+        self.events = self.mycam.create_events_service()
+        self.device_mgmt = self.mycam.create_devicemgmt_service()
+        self.camera_media_profile = self.camera_media.GetProfiles()[0]
+        logging.info('Loaded camera ONVIF media profile')
 
         return self.camera_ptz, self.camera_media_profile
 
@@ -147,7 +138,7 @@ class ONVIFControl:
         logging.info('camera_command( get_ptz() )')
         return ptz_list
 
-    def set_preset(self, preset_name: str):
+    def set_preset(self, key):
         """
         The command saves the current device position parameters.
         Args:
@@ -155,6 +146,8 @@ class ONVIFControl:
         Returns:
             Return onvif's response.
         """
+        preset_name=f"Preset{str(key).zfill(3)}"
+        self.remove_preset(preset_name)
         presets = ONVIFControl.get_preset_complete(self)
         request = self.camera_ptz.create_type('SetPreset')
         request.ProfileToken = self.camera_media_profile.token
@@ -235,7 +228,7 @@ class ONVIFControl:
             if str1 == preset_position:
                 request.PresetToken = presets[i].token
                 resp = self.camera_ptz.GotoPreset(request)
-                logging.info("Goes to (\'%s\')", preset_position)
+                logging.info("Going to (\'%s\')", preset_position)
                 return resp
         logging.warning("Preset (\'%s\') not found!", preset_position)
         return None
@@ -243,3 +236,9 @@ class ONVIFControl:
     def get_snaphot_uri(self):
         return self.camera_media.GetSnapshotUri({'ProfileToken': self.camera_media_profile.token})
 
+
+if __name__ == "__main__":
+    import util
+    config = util.load_config(".config")
+    onv = ONVIFControl(config)
+    help(onvif)

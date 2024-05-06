@@ -29,8 +29,8 @@ class AI:
             print("AI Timed out")
             ai.disable()
             ai.retry_timer = time.time() + 5
-        elif not ai.active and self.retry_timer and time.time() > ai.retry_timer:
-            self.enable()
+        elif not ai.active and ai.retry_timer and time.time() > ai.retry_timer:
+            ai.enable()
 
     def toggle(self):
         if not self.active:

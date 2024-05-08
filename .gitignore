@@ -137,3 +137,6 @@ detection/yolov3.weights
 images/*.txt
 sightings.txt
 *.265
+
+# Config file
+*.config

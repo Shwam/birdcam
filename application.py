@@ -48,6 +48,7 @@ class UI:
         self.box_timer = time.time()
         self.last_chirp = dict()
         self.bird_boxes = []
+        self.last_image = None
 
         cam.set_name("birdcam")
         cam.set_time()
@@ -177,6 +178,8 @@ class UI:
             # center cursor
             pygame.draw.circle(ui.display,UI.BLACK,((ui.display_size[0]-10)/2,(ui.display_size[1]-10)/2), 10, 3)
 
+            ui.display.blit(ui.focus_info, (0,100))
+
             if ui.click_point:
                 pygame.draw.circle(ui.display, (255,0,0), ui.click_point, 3, 3)
             for box in ui.bird_boxes:
@@ -201,9 +204,17 @@ class UI:
         cam.restore_rtsp()
 
         image = cam.get_snapshot()
-        
-        image = pygame.transform.scale(image, ui.display_size)
-        ui.display.blit(image, (0,0))
+        ui.focus_info = ui.font.render(f'{cam.focus_amount(image):.2f}', False, UI.WHITE)
+
+        if image is not None:
+            image = pygame.transform.scale(image, ui.display_size)
+            ui.last_image = image
+            ui.display.blit(image, (0,0))
+        else:
+            if ui.last_image is not None:
+                ui.display.blit(ui.last_image, (0,0))
+            errored_out = ui.font.render(f"No feed detected", False,  UI.WHITE)
+            ui.display.blit(errored_out, (200, 0))
     
     def process_boxes(ui, boxes, timestamp, image):
         if not boxes:

@@ -7,6 +7,7 @@ import io
 
 import cv2
 import numpy as np
+import math
 
 from onvif_control import ONVIFControl
 from cgi_control import CGIControl
@@ -52,7 +53,8 @@ class Camera:
     def get_snapshot(self, high_quality=False, image_queue=None, local_image_queue=None, mode=None):
         if self.rtsp and (mode == "rtsp" or not (self.realtime and self.cgi)):
             snapshot = self.rtsp.read()
-              
+            if not snapshot:
+                return None 
             if image_queue != None and local_image_queue != None:
                 # Convert PIL image to pygame surface image
                 img_byte_arr = io.BytesIO()
@@ -90,7 +92,8 @@ class Camera:
     def save_rtsp_snapshot(cam, filename):
         #pygame.time.wait(500) # wait for the video feed to catch up
         snapshot = cam.rtsp.read()
-        snapshot.save(filename)
+        if snapshot is not None:
+            snapshot.save(filename)
 
     def take_snapshot(cam):
         filename = "snapshots/" + datetime.now().strftime("%y%m%d%H%M%S.jpg")
@@ -132,30 +135,12 @@ class Camera:
 
     def rtsp_equals_snapshot(self):
         # compare whether the current rtsp image roughly matches the snapshot
-        current_rtsp = self.get_snapshot(mode="rtsp")
-        current_snapshot = self.get_snapshot(mode="snapshot")
-        
-        view = pygame.surfarray.array3d(current_rtsp)
-        view = view.transpose([1, 0, 2])
-        img_rtsp = cv2.cvtColor(view, cv2.COLOR_RGB2BGR)
-        
-        view = pygame.surfarray.array3d(current_snapshot)
-        view = view.transpose([1, 0, 2])
-        img_snapshot = cv2.cvtColor(view, cv2.COLOR_RGB2BGR)
-
-        # make them the same size
-        """h1, w1, _ = img_rtsp.shape
-        h2, w2, _ = img_snapshot.shape
-        h, w = (min(h1,h2), min(w1,w2))
-        if (h1,w1) != (h,w):
-            img_rtsp = cv2.resize(img_rtsp, (w,h))
-        if(h2, w2) != (h,w):
-            img_snapshot = cv2.resize(img_snapshot, (w,h))"""
-        
- 
-        hist = self.hist(img_rtsp, img_snapshot)
-        print(hist)
-        return (hist < 0.2) 
+        current_rtsp = surface_to_cv2(self.get_snapshot(mode="rtsp"))
+        current_snapshot = surface_to_cv2(self.get_snapshot(mode="snapshot")) 
+        if current_rtsp is None or current_snapshot is None:
+            return False
+        hist = self.hist(current_rtsp, current_snapshot)
+        return (hist < 0.18) 
 
     def hist(self, img1, img2):        
         h_bins = 50
@@ -173,6 +158,17 @@ class Camera:
         cv2.normalize(hist1, hist1, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
         cv2.normalize(hist2, hist2, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
         return cv2.compareHist(hist1, hist2, 3)
+
+    def focus_amount(self, img=None):
+        img = surface_to_cv2(img) if img is None else surface_to_cv2(self.get_snapshot())
+        if img is None:
+            return 0
+        # Crop it
+        h, w, _ = img.shape
+        img = img[w*2//5:w*3//5, h*2//5:h*3//5]
+
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)  
+        return cv2.Laplacian(gray, cv2.CV_64F).var()
 
     def ptz(cam):
         # Pan and Tilt      
@@ -237,13 +233,13 @@ class Camera:
     def ctrl_preset(cam, key):
         if cam.cgi:
             cam.cgi.ctrl_preset(key)
-        if cam.onvif:
+        elif cam.onvif:
             cam.onvif.go_to_preset(key)
 
     def set_preset(cam, key):
         if cam.cgi:
             cam.cgi.set_preset(key)
-        if cam.onvif:
+        elif cam.onvif:
             cam.onvif.set_preset(key)
     
     def zoom(cam, amount):
@@ -261,3 +257,10 @@ class Camera:
         elif amount < 0:
             cam.cgi.send_command('focusout', 50)
 
+
+def surface_to_cv2(img):
+    if img is None:
+        return None
+    view = pygame.surfarray.array3d(img)
+    view = view.transpose([1, 0, 2])
+    return cv2.cvtColor(view, cv2.COLOR_RGB2BGR)

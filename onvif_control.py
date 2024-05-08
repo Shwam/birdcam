@@ -241,4 +241,4 @@ if __name__ == "__main__":
     import util
     config = util.load_config(".config")
     onv = ONVIFControl(config)
-    help(onvif)
+    onv.continuous_move(1,1,1) 

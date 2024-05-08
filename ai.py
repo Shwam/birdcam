@@ -44,7 +44,7 @@ class AI:
         
     def enable(self):
         self.active = True
-        self.processing_timeout = time.time() + 10
+        self.processing_timeout = time.time() + 30
         self.retry_timer = None
     
     def disable(self):
@@ -68,5 +68,5 @@ class AI:
         else:
             cam.queue_snapshot(ai)
             ai.processing_image = True
-            ai.processing_timeout = time.time() + 10
+            ai.processing_timeout = time.time() + 30
         return boxes, timestamp, image

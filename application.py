@@ -203,7 +203,7 @@ class UI:
     def display_feed(ui, cam):
         cam.restore_rtsp()
 
-        image = cam.get_snapshot()
+        image = cam.view()
         ui.focus_info = ui.font.render(f'{cam.focus_amount(image):.2f}', False, UI.WHITE)
 
         if image is not None:
@@ -226,7 +226,7 @@ class UI:
         for b in boxes:
             label, confidence, rect = b
             if not ui.muted and confidence > 0.9:
-                if label not in ("chair", "cake", "fire hydrant", "bird", "frisbee", "bowl", "spoon", "car"):
+                if label not in ("chair", "cake", "fire hydrant", "bird", "frisbee", "bowl", "spoon", "car", "clock"):
                     ui.speak(label.replace("person", "intruder"))
                     print(label)
             x1,y1,x2,y2 = rect

@@ -66,7 +66,7 @@ class AI:
                 except queue.Empty:
                     return ([], None, None)
         else:
-            cam.queue_snapshot(ai)
+            cam.send_ai_snapshot(ai)
             ai.processing_image = True
             ai.processing_timeout = time.time() + 30
         return boxes, timestamp, image

@@ -3,14 +3,13 @@ import time
 from datetime import datetime
 import threading
 import pygame
-import io
 
 import cv2
-import numpy as np
 import math
 
 from onvif_control import ONVIFControl
 from cgi_control import CGIControl
+from util import convert_image
 
 class Camera:
     def __init__(self, CONFIG):
@@ -31,6 +30,10 @@ class Camera:
         self.shiftrtsp_timer = None
         if "rtsp" in CONFIG:
             self.connect_rtsp()
+        
+        # Camera feed
+        self.buffer = []
+        self.last_snapshot_queued = time.time() - 100
  
         # Camera movement
         self.last_pan = self.last_tilt = 0
@@ -49,43 +52,71 @@ class Camera:
     
         self.speed_threshold = 0.001
 
+    def flush_mode(self, purge_mode):
+        i = 0
+        while i < len(self.buffer):
+            mode = self.buffer[i][1]
+            if mode == purge_mode:
+                self.buffer.pop(i)
+            else:
+                i = i + 1
 
-    def get_snapshot(self, high_quality=False, image_queue=None, local_image_queue=None, mode=None):
+    def view(self):
+        self.buffer.sort(key = lambda x: x[0])
+        while len(self.buffer) > 5 and self.buffer[0][0] + 0.1 < time.time():
+            # image is stale
+            self.buffer.pop(0)
+        if not self.buffer:
+            return self.get_snapshot(returns=True)
+        if len(self.buffer) < 3 and self.last_snapshot_queued + 0.05 < time.time():
+            self.queue_thread_snapshot()
+ 
+        if len(self.buffer) > 1:
+            timestamp, mode, img = self.buffer.pop(0)
+        else:
+            timestamp, mode, img = self.buffer[0]
+        return img
+
+    def get_snapshot(self, high_quality=False, mode=None, returns=False, buffer=True, start_time=None):
+        start_time = start_time or time.time()
+        self.last_snapshot_queued = start_time
+        snapshot = None
+        
+        # Take the snapshot from the appropriate feed
         if self.rtsp and (mode == "rtsp" or not (self.realtime and self.cgi)):
             snapshot = self.rtsp.read()
-            if not snapshot:
-                return None 
-            if image_queue != None and local_image_queue != None:
-                # Convert PIL image to pygame surface image
-                img_byte_arr = io.BytesIO()
-                snapshot.save(img_byte_arr, format='jpeg')
-                image = img_byte_arr.getvalue()
+            mode = "rtsp"
+        if snapshot is None and self.cgi:
+            snapshot = self.cgi.get_snapshot(high_quality) 
+            mode = "cgi"
+        if snapshot is None:
+            return None 
+       
+        # Place it in the buffer or return it directly
+        if buffer and self.buffer:
+            self.buffer.append((start_time, mode, convert_image(snapshot, "pygame")))
+        if returns:
+            return convert_image(snapshot, "pygame")
 
-                local_image_queue.put(image)
-                image_queue.put(image)
 
-            else:
-                # Calculate mode, size and data
-                mode = snapshot.mode
-                size = snapshot.size
-                data = snapshot.tobytes()
-                pygame_image = pygame.image.fromstring(data, size, mode)
-                return pygame_image
-        elif self.cgi:
-            snapshot = self.cgi.get_snapshot(high_quality, image_queue, local_image_queue)
-
-            if image_queue != None and local_image_queue != None:
-                local_image_queue.put(snapshot)
-                image_queue.put(snapshot)
-            else:
-                image = pygame.image.load(io.BytesIO(snapshot))
-                return image
-
-    def queue_snapshot(cam, ai, high_quality=True):
-        threading.Thread(target=cam.get_snapshot, args=[high_quality, ai.image_queue, ai.local_image_queue]).start()
+    def send_ai_snapshot(cam, ai):
+        threading.Thread(target=cam.send_ai_snapshot_thread, args=[ai.image_queue, ai.local_image_queue]).start()
+   
+    def send_ai_snapshot_thread(cam, image_queue, local_image_queue):
+        snapshot = cam.view()
+        if image_queue != None and local_image_queue != None:
+            #image = convert_image(snapshot, "numpy")
+            image = convert_image(snapshot, "jpeg")
+            local_image_queue.put(image)
+            image_queue.put(image)
+ 
+    def queue_thread_snapshot(cam, high_quality=False):
+        start_time = time.time()
+        self.last_snapshot_queued = start_time
+        threading.Thread(target=cam.get_snapshot, args=[high_quality, None, False, True, start_time]).start()
 
     def save_hqsnapshot(cam, filename):
-        content = cam.get_snapshot(high_quality=True)
+        content = cam.get_snapshot(high_quality=True, returns=True, buffer=False)
         with open(filename, "wb") as f:
             f.write(content)
 
@@ -114,6 +145,7 @@ class Camera:
             if cam.rtsp_equals_snapshot():
                 cam.shiftrtsp_timer = None
                 cam.realtime = False
+                cam.flush_mode("cgi")
             else:
                 # give it some more time
                 cam.shiftrtsp_timer = time.time() + 0.1
@@ -135,10 +167,12 @@ class Camera:
 
     def rtsp_equals_snapshot(self):
         # compare whether the current rtsp image roughly matches the snapshot
-        current_rtsp = surface_to_cv2(self.get_snapshot(mode="rtsp"))
-        current_snapshot = surface_to_cv2(self.get_snapshot(mode="snapshot")) 
+        current_rtsp = self.get_snapshot(mode="rtsp", returns=True, buffer=False)
+        current_snapshot = self.get_snapshot(mode="snapshot", returns=True, buffer=False)
         if current_rtsp is None or current_snapshot is None:
             return False
+        current_rtsp = convert_image(current_rtsp, "cv2")
+        current_snapshot = convert_image(current_snapshot, "cv2")
         hist = self.hist(current_rtsp, current_snapshot)
         return (hist < 0.18) 
 
@@ -160,9 +194,11 @@ class Camera:
         return cv2.compareHist(hist1, hist2, 3)
 
     def focus_amount(self, img=None):
-        img = surface_to_cv2(img) if img is None else surface_to_cv2(self.get_snapshot())
+        img = img if img is not None else self.view()
         if img is None:
             return 0
+
+        img = convert_image(img, "cv2")
         # Crop it
         h, w, _ = img.shape
         img = img[w*2//5:w*3//5, h*2//5:h*3//5]
@@ -257,10 +293,3 @@ class Camera:
         elif amount < 0:
             cam.cgi.send_command('focusout', 50)
 
-
-def surface_to_cv2(img):
-    if img is None:
-        return None
-    view = pygame.surfarray.array3d(img)
-    view = view.transpose([1, 0, 2])
-    return cv2.cvtColor(view, cv2.COLOR_RGB2BGR)

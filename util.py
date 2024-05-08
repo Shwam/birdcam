@@ -1,6 +1,11 @@
 import ast
 import os
 import json
+from PIL import Image
+import cv2
+import numpy as np
+import io
+import pygame
 
 def create_config(path):
     config = dict()
@@ -78,6 +83,55 @@ def save_xml(boxes, path):
 
     with open(path.replace(".jpg", ".xml"), "w") as f:
         f.write(output)
+
+def convert_image(image, output_format):
+    # Convert images between formats. Supported output_formats:
+    #     numpy, pygame, jpeg, cv2
+    #print(f"Converting image of type {type(image)} to {output_format}")
+    try:
+        if type(image).__name__ == "Image":
+            if output_format.lower() == "numpy":
+                return np.array(image)
+            elif output_format.lower() in ("jpg", "jpeg"):
+                # Convert PIL image to byte array
+                img_byte_arr = io.BytesIO()
+                image.save(img_byte_arr, format='jpeg')
+                return img_byte_arr.getvalue()
+            elif output_format.lower()=="pygame":
+                # Calculate mode, size and data
+                mode = image.mode
+                size = image.size
+                data = image.tobytes()
+                return pygame.image.fromstring(data, size, mode)
+        elif type(image) == bytes:
+            if image[:3] == b"\xff\xd8\xff": # JPEG
+                if output_format in ("jpg", "jpeg"):
+                    return image
+            if output_format == "numpy":
+                return cv2.imdecode(np.frombuffer(image, np.uint8), -1)
+            elif output_format == "pygame":
+                return pygame.image.load(io.BytesIO(image))
+        elif type(image).__name__ == "ndarray":
+            if output_format == "pygame":
+                return pygame.surfarray.make_surface(image)
+            elif output_format.lower() in ("jpg", "jpeg"):
+                im = Image.fromarray(image)
+                return convert_image(im, output_format)
+        elif type(image).__name__ == "Surface":
+            if output_format == "cv2":
+                view = pygame.surfarray.array3d(image)
+                view = view.transpose([1, 0, 2])
+                return cv2.cvtColor(view, cv2.COLOR_RGB2BGR)
+            elif output_format.lower() in ("jpg", "jpeg"):
+                img_byte_arr = io.BytesIO()
+                pygame.image.save(image, img_byte_arr)
+                return img_byte_arr.getvalue()
+    except KeyboardInterrupt as err:
+        exit()
+        print(f"Conversion error: {err}")
+        
+    print(f"Cannot convert image of type {type(image)} to {output_format}")
+    return image
 
 if __name__ == "__main__":
     create_config("example.config")

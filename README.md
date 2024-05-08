@@ -36,7 +36,8 @@ Then run `python application.py`, which will walk you through config generation 
 - docker-compose
 
 ## Installation
-```git submodule update --init --recursive
+```console
+git submodule update --init --recursive
 pip install -r requirements.txt
 cd darknet_server
 docker-compose up

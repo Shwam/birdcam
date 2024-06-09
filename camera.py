@@ -50,6 +50,9 @@ class Camera:
         self.alternate_timer = time.time() + 0.25
         
         self.zooming = False
+        self.digital_zoom = 0
+        self.digital_zoom_rate = 0
+        self.optical_zoom_enabled = CONFIG.get("optical_zoom", self.rtsp or self.onvif)
     
         self.speed_threshold = 0.001
 
@@ -271,6 +274,9 @@ class Camera:
         # Zoom
         if cam.zooming or abs(cam.pan) > cam.speed_threshold or abs(cam.tilt) > cam.speed_threshold:
             cam.shift_rtsp()
+        if cam.digital_zoom_rate != 0:
+            cam.digital_zoom += cam.digital_zoom_rate / 2
+            cam.digital_zoom = max(0, min(cam.digital_zoom, 0.95))
 
         # Update velocity
         cam.last_tilt, cam.last_pan = cam.tilt, cam.pan
@@ -282,6 +288,7 @@ class Camera:
             self.cgi.send_command('stop') 
         elif self.onvif:
             self.onvif.continuous_move(0, 0, 0)
+        self.digital_zoom_rate = 0
    
     def set_name(cam, name="birdcam"): 
         if cam.cgi:
@@ -304,15 +311,19 @@ class Camera:
             cam.onvif.set_preset(key)
     
     def zoom(cam, amount):
-        if cam.cgi:
+        amount = amount * cam.speed_modifier
+        if cam.optical_zoom_enabled and cam.cgi:
             if amount > 0:
                 cam.cgi.send_command('zoomin', 50)
             elif amount < 0:
                 cam.cgi.send_command('zoomout', 50)
-        elif cam.onvif:
+        elif cam.optical_zoom_enabled and cam.onvif:
             cam.onvif.continuous_move(0, 0, amount)
+        else: # digital zoom
+            cam.digital_zoom_rate = amount
                     
     def focus(cam, amount):
+        amount = amount * cam.speed_modifier
         if amount > 0:
             cam.cgi.send_command('focusin', 50)
         elif amount < 0:

@@ -118,16 +118,16 @@ class UI:
                     cam.realtime = not cam.realtime
                     cam.shiftrtsp_timer = None
                 elif event.key == pygame.K_EQUALS:
-                    cam.zoom(0.5)
+                    cam.zoom(1.0)
                     cam.zooming = True
                 elif event.key == pygame.K_MINUS:
-                    cam.zoom(-0.5)
+                    cam.zoom(-1.0)
                     cam.zooming = True
                 elif event.key == pygame.K_RIGHTBRACKET:
-                    cam.focus(0.5)
+                    cam.focus(1.0)
                     cam.zooming = True
                 elif event.key == pygame.K_LEFTBRACKET:
-                    cam.focus(-0.5)
+                    cam.focus(-1.0)
                     cam.zooming = True
                 elif event.key == pygame.K_SPACE:
                     ui.display.fill(UI.WHITE)
@@ -228,7 +228,16 @@ class UI:
         if image is not None:
             image = pygame.transform.scale(image, ui.display_size)
             ui.last_image = image
-            ui.display.blit(image, (0,0))
+            if cam.digital_zoom != 0:
+                x, y =  ui.display_size
+                dx = x * cam.digital_zoom / 2
+                dy = y * cam.digital_zoom / 2
+                cropped = pygame.Surface((x -2*dx, y-2*dy))
+                cropped.blit(image, (0, 0), (dx, dy, x-dx, y-dy))
+                cropped = pygame.transform.scale(cropped, ui.display_size)
+                ui.display.blit(cropped, (0,0))
+            else:
+                ui.display.blit(image, (0,0))
         else:
             if ui.last_image is not None:
                 image = pygame.transform.scale(ui.last_image, ui.display_size)

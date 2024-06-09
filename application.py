@@ -15,6 +15,7 @@ from gtts import gTTS
 import util
 from camera import Camera
 from ai import AI
+from hue import get_bridge, intruder_thread_start
 
 class UI:
     # UI Constants
@@ -22,22 +23,27 @@ class UI:
     INFRARED_SYMBOLS = "●", "○", "◐"
     BLACK = (0,0,0)
     WHITE = (255,255,255)
+    YELLOW = (255, 255, 102)
     PINK = (245, 115, 158)
+    RED = (255, 30, 30)
 
     def __init__(self, CONFIG, cam):
-        # Initialize pygame 
+        self.debug = False
+        # Initialize pygame settings
         pygame.init()
         pygame.font.init()
         self.font = pygame.font.SysFont('Consolas', 30)
+        self.large_font = pygame.font.SysFont('Consolas', 60)
         self.fullscreen = False
         self.fullscreen_size = 1920,1080
         self.windowed_size = 800,448
         self.display_size=self.windowed_size
         self.display = pygame.display.set_mode(self.display_size, pygame.RESIZABLE + pygame.DOUBLEBUF, 32)
         pygame.display.set_caption('Bird Cam Controls')
+
+        # Initialize UI settings
         self.keys = {k:pygame.__dict__[k] for k in pygame.__dict__ if k[0:2] == "K_"}
         self.click_point = None
-
         self.show_ui = True
         self.infrared_index = 0
         if cam.cgi:
@@ -58,6 +64,12 @@ class UI:
         self.is_focused = False
         self.spinner = itertools.cycle('◴'*3 + '◷'*3 + '◶'*3 + '◵'*3)
         self.K_LGUI = False
+
+        self.config_path = CONFIG["config_path"]
+        self.config = CONFIG
+        self.write_bird_count(0)
+
+        self.bridge = get_bridge()
  
     def update_size(ui):
         ui.display_size = pygame.display.get_surface().get_size()
@@ -97,6 +109,11 @@ class UI:
                     cam.vertical = -1
                 elif event.key == pygame.K_a:
                     ai.toggle()
+                elif event.key == pygame.K_d:
+                    ui.debug = not ui.debug
+                    ai.debug = not ai.debug
+                    cam.debug = not cam.debug
+                    print("Debug mode set to ", ui.debug)
                 elif event.key == pygame.K_r:
                     cam.realtime = not cam.realtime
                     cam.shiftrtsp_timer = None
@@ -171,7 +188,7 @@ class UI:
             overlay.blit(ui.ir_info, (0,0))
             overlay.blit(ui.ai_info, (0,30))
             if ui.muted:
-                overlay.blit(audio_info, (0, 60))
+                overlay.blit(ui.audio_info, (0, 60))
             overlay.set_alpha(110)
             ui.display.blit(overlay, (5,30))
              
@@ -195,6 +212,7 @@ class UI:
             
             if ui.bird_boxes and time.time() > ui.box_timer:
                 ui.bird_boxes = []
+                ui.write_bird_count(0)
 
         # Update the screen
         pygame.display.update()
@@ -203,7 +221,8 @@ class UI:
     def display_feed(ui, cam):
         cam.restore_rtsp()
 
-        image = cam.view()
+        image = cam.view("pygame")
+
         ui.focus_info = ui.font.render(f'{cam.focus_amount(image):.2f}', False, UI.WHITE)
 
         if image is not None:
@@ -212,9 +231,10 @@ class UI:
             ui.display.blit(image, (0,0))
         else:
             if ui.last_image is not None:
-                ui.display.blit(ui.last_image, (0,0))
-            errored_out = ui.font.render(f"No feed detected", False,  UI.WHITE)
-            ui.display.blit(errored_out, (200, 0))
+                image = pygame.transform.scale(ui.last_image, ui.display_size)
+                ui.display.blit(image, (0,0))
+            errored_out = ui.large_font.render(f"No feed detected", False,  UI.RED)
+            ui.display.blit(errored_out, (10, 200))
     
     def process_boxes(ui, boxes, timestamp, image):
         if not boxes:
@@ -226,8 +246,10 @@ class UI:
         for b in boxes:
             label, confidence, rect = b
             if not ui.muted and confidence > 0.9:
-                if label not in ("chair", "cake", "fire hydrant", "bird", "frisbee", "bowl", "spoon", "car", "clock"):
+                if label not in ("chair", "cake", "fire hydrant", "bird", "frisbee", "bowl", "spoon", "car", "clock", "parking meter", "cup"):
                     ui.speak(label.replace("person", "intruder"))
+                    if label == "person":
+                        intruder_thread_start(ui.bridge)
                     print(label)
             x1,y1,x2,y2 = rect
             if confidence > 0.8:
@@ -242,6 +264,7 @@ class UI:
             if "bird" in labels_present:
                 with open("sightings.txt", "a") as f:
                     f.write(f"{timestamp}\t{labels_present['bird']}\n")
+                ui.write_bird_count(labels_present['bird'])
                 ui.chirp()
             if "cat" in labels_present:
                 ui.chirp("meow.mp3")
@@ -250,7 +273,7 @@ class UI:
             if "person" in labels_present:
                 ui.chirp("intruder.wav")
 
-            fpath = "images/" + timestamp + ".jpg"
+            fpath = os.path.join(ui.config.get("output_dir", "images"), timestamp + ".jpg")
             with open(fpath, "wb") as f:
                 f.write(image)
             util.save_xml(boxes, fpath)
@@ -283,13 +306,30 @@ class UI:
         ui.display_feed(cam)
 
         # Display overlay/status
-        ui.ai_info = ui.font.render(f'AI {"◙" if time.time() > ai.processing_timeout and ai.active and ai.processing_image else next(ui.spinner) if ai.processing_image and ai.active else "●" if ai.active else "○"}', False,  UI.WHITE)
+        color = UI.PINK if time.time() > ai.processing_timeout and ai.active and ai.processing_image else UI.WHITE if ai.processing_image and ai.active else UI.WHITE if ai.active else UI.YELLOW
+        symbol = "◙" if time.time() > ai.processing_timeout and ai.active and ai.processing_image else next(ui.spinner) if ai.processing_image and ai.active else "●" if ai.active else "○"
+        ui.ai_info = ui.font.render(f'AI {symbol}', False,  color)
         ui.draw_overlay()
 
         # Ensure the connections are still alive
         cam.check_connection()
         ai.check_connection()
-
+   
+    def elastic_bird_count(self, count):
+        if "elastic" in self.config:
+            elastic = self.config["elastic"]
+            doc_name = self.config_path.replace("config", "bird_count").replace(".", "_")
+            uri = f"https://{elastic['address']}:{elastic.get('port', 9200)}/birds/_doc/{doc_name}"
+            command = f"""curl --cacert {elastic['ca_cert']} -u {elastic['user']}:{elastic['password']} {uri} -H 'Content-Type: application/json' -XPOST -d """ + "'{ \"count\" : " + f"{count}" +  ' }\''
+            result = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.read().decode("utf8")
+            if "updated" in result:
+                print("Successfully updated bird count to", count)
+            else:
+                print("Failed to update bird count:", result)
+ 
+    def write_bird_count(self, count):
+        if "elastic" in self.config:
+            self.elastic_bird_count(count)
 
 def main():
     # Load configuration settings    

@@ -13,6 +13,7 @@ from util import convert_image
 
 class Camera:
     def __init__(self, CONFIG):
+        self.debug = False
         # Initialize CGI controls
         self.cgi = None
         if "cgi" in CONFIG:
@@ -61,20 +62,29 @@ class Camera:
             else:
                 i = i + 1
 
-    def view(self):
+    def view(self, output_format=None):
         self.buffer.sort(key = lambda x: x[0])
         while len(self.buffer) > 5 and self.buffer[0][0] + 0.1 < time.time():
             # image is stale
             self.buffer.pop(0)
+            print("Too fast!")
         if not self.buffer:
-            return self.get_snapshot(returns=True)
-        if len(self.buffer) < 3 and self.last_snapshot_queued + 0.05 < time.time():
+            img = self.get_snapshot(returns=True)
+            if img is None:
+                return None
+            if output_format:
+                img = convert_image(img, output_format)
+            return img
+        if len(self.buffer) < 3 and self.last_snapshot_queued + 0.03 < time.time():
             self.queue_thread_snapshot()
  
         if len(self.buffer) > 1:
             timestamp, mode, img = self.buffer.pop(0)
         else:
             timestamp, mode, img = self.buffer[0]
+
+        if output_format:
+            img = convert_image(img, output_format)
         return img
 
     def get_snapshot(self, high_quality=False, mode=None, returns=False, buffer=True, start_time=None):
@@ -87,8 +97,11 @@ class Camera:
             snapshot = self.rtsp.read()
             mode = "rtsp"
         if snapshot is None and self.cgi:
-            snapshot = self.cgi.get_snapshot(high_quality) 
-            mode = "cgi"
+            try:
+                snapshot = self.cgi.get_snapshot(high_quality) 
+                mode = "cgi"
+            except Exception as err:
+                print("Error getting snapshot", err)
         if snapshot is None:
             return None 
        
@@ -96,19 +109,22 @@ class Camera:
         if buffer and self.buffer:
             self.buffer.append((start_time, mode, convert_image(snapshot, "pygame")))
         if returns:
-            return convert_image(snapshot, "pygame")
-
-
+            return snapshot #convert_image(snapshot, "pygame")
+    
     def send_ai_snapshot(cam, ai):
-        threading.Thread(target=cam.send_ai_snapshot_thread, args=[ai.image_queue, ai.local_image_queue]).start()
+        threading.Thread(target=cam.send_ai_snapshot_thread, args=[ai,]).start()
    
-    def send_ai_snapshot_thread(cam, image_queue, local_image_queue):
-        snapshot = cam.view()
-        if image_queue != None and local_image_queue != None:
-            #image = convert_image(snapshot, "numpy")
-            image = convert_image(snapshot, "jpeg")
-            local_image_queue.put(image)
-            image_queue.put(image)
+    def send_ai_snapshot_thread(cam, ai):
+        image = cam.view("jpeg")
+        if image is not None and ai.image_queue != None and ai.local_image_queue != None:
+            ai.local_image_queue.put(image)
+            ai.image_queue.put(image)
+            if ai.debug:
+                print("Cam: successfully queued image for AI")
+        else: 
+            ai.processing_image = False
+            if ai.debug:
+                print("Cam: failed to queue image for AI")
  
     def queue_thread_snapshot(cam, high_quality=False):
         start_time = time.time()
@@ -117,6 +133,7 @@ class Camera:
 
     def save_hqsnapshot(cam, filename):
         content = cam.get_snapshot(high_quality=True, returns=True, buffer=False)
+        content = convert(content, "jpeg")
         with open(filename, "wb") as f:
             f.write(content)
 
@@ -150,12 +167,17 @@ class Camera:
                 # give it some more time
                 cam.shiftrtsp_timer = time.time() + 0.1
 
+
     def check_connection(self):
         # Reconnect to any services that have been lost
         if self.rtsp:
             if not self.rtsp.isOpened():
                 print("Detected RTSP failure. Reconnecting")
                 self.connect_rtsp()
+    
+    def wait_reconnect(self, sleep_time):
+        time.sleep(sleep_time)
+        self.connect_rtsp()
 
     def connect_rtsp(self):
         self.rtsp = rtsp.Client(rtsp_server_uri = self.rtsp_server_uri)
@@ -163,7 +185,10 @@ class Camera:
             print(f"Connected to RTSP client")
         else:
             self.rtsp = None
-            print("Could not connect to RTSP")
+            sleep_time = 30
+            print(f"Could not connect to RTSP. Retrying in {sleep_time}")
+            threading.Thread(target=self.wait_reconnect, args=[sleep_time,]).start()
+            
 
     def rtsp_equals_snapshot(self):
         # compare whether the current rtsp image roughly matches the snapshot

@@ -38,10 +38,12 @@ def create_config(path):
 def load_config(path):
     if os.path.exists(path):
         with open(path, "r") as f:
-            return ast.literal_eval(f.read())
+            config = ast.literal_eval(f.read())
     else:
         print(f"No configuration file found at {path}, creating new one")
-        return create_config(path)
+        config = create_config(path)
+    config["config_path"] = path
+    return config
 
 
 def save_xml(boxes, path):
@@ -103,6 +105,8 @@ def convert_image(image, output_format):
                 size = image.size
                 data = image.tobytes()
                 return pygame.image.fromstring(data, size, mode)
+            elif output_format.lower()=="cv2":
+                return cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
         elif type(image) == bytes:
             if image[:3] == b"\xff\xd8\xff": # JPEG
                 if output_format in ("jpg", "jpeg"):
@@ -111,6 +115,8 @@ def convert_image(image, output_format):
                 return cv2.imdecode(np.frombuffer(image, np.uint8), -1)
             elif output_format == "pygame":
                 return pygame.image.load(io.BytesIO(image))
+            elif output_format == "cv2":
+                return cv2.imdecode(np.fromstring(image, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
         elif type(image).__name__ == "ndarray":
             if output_format == "pygame":
                 return pygame.surfarray.make_surface(image)
@@ -118,7 +124,7 @@ def convert_image(image, output_format):
                 im = Image.fromarray(image)
                 return convert_image(im, output_format)
         elif type(image).__name__ == "Surface":
-            if output_format == "cv2":
+            if output_format.lower() == "cv2":
                 view = pygame.surfarray.array3d(image)
                 view = view.transpose([1, 0, 2])
                 return cv2.cvtColor(view, cv2.COLOR_RGB2BGR)

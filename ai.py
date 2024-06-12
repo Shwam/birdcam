@@ -52,7 +52,7 @@ class AI:
         self.processing_timeout = time.time() + 30
         self.retry_timer = None
         if self.debug:
-            print(f"AI: Enabled (processing_mage: {processing_image})")
+            print(f"AI: Enabled (processing_image: {self.processing_image})")
     
     def disable(self):
         self.active = False

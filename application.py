@@ -71,7 +71,9 @@ class UI:
         self.config = CONFIG
         self.write_bird_count(0)
 
-        self.bridge = get_bridge()
+        self.bridge = None
+        if "hue" in CONFIG:
+            self.bridge = get_bridge(CONFIG["hue"]["address"], CONFIG["hue"]["user"])
  
     def update_size(ui):
         ui.display_size = pygame.display.get_surface().get_size()
@@ -254,11 +256,11 @@ class UI:
         # Extract detections of high confidence
         for b in boxes:
             label, confidence, rect = b
-            if not ui.muted and confidence > 0.9:
-                if label not in ui.IGNORED_CLASSES:
+            if confidence > 0.9: 
+                if label not in ui.IGNORED_CLASSES and not ui.muted:
                     ui.speak(label.replace("person", "intruder"))
-                    if label == "person":
-                        intruder_thread_start(ui.bridge)
+                if ui.bridge and label in ["person", "bear"]:
+                    intruder_thread_start(ui.bridge, ui.config["hue"]["light_names"])
             x1,y1,x2,y2 = rect
             if confidence > 0.8:
                 labels_present[label] = labels_present.get(label, 0) + 1 

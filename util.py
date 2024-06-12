@@ -6,6 +6,8 @@ import cv2
 import numpy as np
 import io
 import pygame
+from datetime import datetime   
+import pytz
 
 def create_config(path):
     config = dict()
@@ -168,6 +170,13 @@ def get_audio_files(path):
             if fname != "voice":
                 audio_files[fname] = file
     return audio_files
+
+def timestamp(native=None, tz="America/Denver"):
+    native = datetime.strptime(native, "%y%m%d%H%M%S%f") if native else datetime.now()
+    #local = pytz.timezone(tz)
+    #local_dt = local.localize(native, is_dst=None)
+    #utc_dt = local_dt.astimezone(pytz.utc)
+    return native.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 if __name__ == "__main__":
     create_config("example.config")

@@ -4,13 +4,15 @@ import sys
 from datetime import datetime
 import random
 import subprocess
+import threading
 import itertools
 import time
 import PIL
+import json
+from gtts import gTTS
 
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
 import pygame
-from gtts import gTTS
 
 import util
 from camera import Camera
@@ -213,7 +215,7 @@ class UI:
             
             if ui.bird_boxes and time.time() > ui.box_timer:
                 ui.bird_boxes = []
-                ui.write_bird_count(0)
+            #    ui.write_bird_count(0)
 
         # Update the screen
         pygame.display.update()
@@ -260,6 +262,7 @@ class UI:
                 if label not in ui.IGNORED_CLASSES and not ui.muted:
                     ui.speak(label.replace("person", "intruder"))
                 if ui.bridge and label in ["person", "bear"]:
+                    print("INTRUDER! Activating floodlight")
                     intruder_thread_start(ui.bridge, ui.config["hue"]["light_names"])
             x1,y1,x2,y2 = rect
             if confidence > 0.8:
@@ -281,11 +284,14 @@ class UI:
             with open(fpath, "wb") as f:
                 f.write(image)
             util.save_xml(boxes, fpath)
+            if "elastic" in ui.config:
+                ui.save_observation(labels_present, timestamp, fpath)
         
-        if "bird" in labels_present:
-            with open("sightings.txt", "a") as f:
-                f.write(f"{timestamp}\t{labels_present['bird']}\n")
-            ui.write_bird_count(labels_present['bird'])
+        #if "bird" in labels_present:
+        #    with open("sightings.txt", "a") as f:
+        #        f.write(f"{timestamp}\t{labels_present['bird']}\n")
+        #    ui.write_bird_count(labels_present['bird'])
+
 
     def chirp(self, chirp_type="bird.wav"):
         if time.time() > self.last_chirp.get(chirp_type, time.time() - 1):
@@ -323,6 +329,22 @@ class UI:
         # Ensure the connections are still alive
         cam.check_connection()
         ai.check_connection()
+    
+    def save_observation(self, labels_present, timestamp, image_path):
+        threading.Thread(target=self.save_observation_thread, args=[labels_present, timestamp, image_path]).start()
+
+    def save_observation_thread(self, labels_present, timestamp, image_path):
+        if "elastic" in self.config:
+            elastic = self.config["elastic"]
+            index = "detections.images"
+            document = { "@timestamp" : util.timestamp(timestamp), "detections": labels_present, "src_ip": self.config["address"], "file_path": image_path, "type": "image", "model": "darknet.pytorch.yolov7" } 
+            uri = f"https://{elastic['address']}:{elastic.get('port', 9200)}/{index}/_doc/"
+            command = f"""curl --cacert {elastic['ca_cert']} -u {elastic['user']}:{elastic['password']} {uri} -H 'Content-Type: application/json' -XPOST -d '{json.dumps(document)}'"""
+            result = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.read().decode("utf8")
+            if "success" in result:
+                print("Successfully recorded observation")
+            else:
+                print("Failed to record observation:", result)
    
     def elastic_bird_count(self, count):
         if "elastic" in self.config:

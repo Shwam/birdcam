@@ -46,12 +46,21 @@ def load_config(path):
     else:
         print(f"No configuration file found at {path}, creating new one")
         config = create_config(path)
+
+    # Append additional data / missing sections
     config["config_path"] = path
 
     image_dir = config.get("output_dir", "images")
     if not os.path.exists(image_dir):
         print(f"Image directory {image_dir} does not exist. Creating it now")
         os.mkdir(image_dir)
+    
+    audio_dir = config.get("audio_dir", "audio")
+    if not os.path.exists(image_dir):
+        print(f"Audio directory {audio_dir} does not exist. Creating it now")
+        os.mkdir(audio_dir)
+
+    config["auto_screenshot_labels"] = config.get("auto_screenshot_labels", ["bird"])
 
     return config
 
@@ -148,6 +157,17 @@ def convert_image(image, output_format):
         
     print(f"Cannot convert image of type {type(image)} to {output_format}")
     return image
+    
+def get_audio_files(path):
+    audio_files = dict()
+    if os.path.exists(path):
+        for file in os.listdir(path):
+            x = file.split(".")
+            fname = ".".join(x[0:-1])
+            extension = x[-1]
+            if fname != "voice":
+                audio_files[fname] = file
+    return audio_files
 
 if __name__ == "__main__":
     create_config("example.config")

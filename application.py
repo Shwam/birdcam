@@ -26,6 +26,7 @@ class UI:
     YELLOW = (255, 255, 102)
     PINK = (245, 115, 158)
     RED = (255, 30, 30)
+    IGNORED_CLASSES = ("chair", "cake", "fire hydrant", "bird", "frisbee", "bowl", "spoon", "car", "clock", "parking meter", "cup", "bench")
 
     def __init__(self, CONFIG, cam):
         self.debug = False
@@ -60,6 +61,7 @@ class UI:
         cam.set_time()
         
         self.muted = False
+        self.audio_files = util.get_audio_files(CONFIG.get("audio_dir", "audio"))
         self.focus_gained = time.time() # Time that the window last gained focus
         self.is_focused = False
         self.spinner = itertools.cycle('◴'*3 + '◷'*3 + '◶'*3 + '◵'*3)
@@ -77,9 +79,6 @@ class UI:
     def handle_input(ui, ai, cam):
         # Get mouse/keyboard events
         for event in pygame.event.get():
-            #if event.type in (pygame.KEYDOWN, pygame.KEYUP) and event.key in (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN, pygame.K_EQUALS, pygame.K_MINUS, pygame.K_RIGHTBRACKET, pygame.K_LEFTBRACKET, pygame.K_SPACE, pygame.K_i, pygame):
-                # process the event via camera control
-                #camera_control.handle_event(event, ui.modifiers) 
             if event.type == pygame.QUIT: # x in titlebar
                 # Tell the client to shut down
                 halt(ai, cam)
@@ -251,43 +250,42 @@ class UI:
         labels_present = dict()
         ui.bird_boxes = boxes
         ui.box_timer = time.time() + 3
-        # find the birds
+
+        # Extract detections of high confidence
         for b in boxes:
             label, confidence, rect = b
             if not ui.muted and confidence > 0.9:
-                if label not in ("chair", "cake", "fire hydrant", "bird", "frisbee", "bowl", "spoon", "car", "clock", "parking meter", "cup", "bench"):
+                if label not in ui.IGNORED_CLASSES:
                     ui.speak(label.replace("person", "intruder"))
                     if label == "person":
                         intruder_thread_start(ui.bridge)
-                    print(label)
             x1,y1,x2,y2 = rect
             if confidence > 0.8:
                 labels_present[label] = labels_present.get(label, 0) + 1 
 
-        #if "car" in labels_present:
-        #    ui.chirp("honk.mp3")
+        # Check for labels of interest
+        screenshot = False
+        for label in labels_present:
+            if label in ui.config["auto_screenshot_labels"]:
+                # take a screenshot
+                screenshot = True
+            if not ui.muted and label in ui.audio_files:
+                # play the relevant alert sound
+                ui.chirp(ui.audio_files[label])
 
-        # save the detection
-        if "bird" in labels_present or "bear" in labels_present or "cat" in labels_present or "person" in labels_present:
+        if screenshot:
             print(f"DETECTED: {boxes}")
-            if "bird" in labels_present:
-                with open("sightings.txt", "a") as f:
-                    f.write(f"{timestamp}\t{labels_present['bird']}\n")
-                ui.write_bird_count(labels_present['bird'])
-                ui.chirp()
-            if "cat" in labels_present:
-                ui.chirp("meow.mp3")
-            if "bear" in labels_present and datetime.now().hour > 21 or datetime.now().hour < 5:
-                ui.chirp("siren.wav")
-            if "person" in labels_present:
-                ui.chirp("intruder.wav")
-
             fpath = os.path.join(ui.config.get("output_dir", "images"), timestamp + ".jpg")
             with open(fpath, "wb") as f:
                 f.write(image)
             util.save_xml(boxes, fpath)
+        
+        if "bird" in labels_present:
+            with open("sightings.txt", "a") as f:
+                f.write(f"{timestamp}\t{labels_present['bird']}\n")
+            ui.write_bird_count(labels_present['bird'])
 
-    def chirp(self, chirp_type="chirp.wav"):
+    def chirp(self, chirp_type="bird.wav"):
         if time.time() > self.last_chirp.get(chirp_type, time.time() - 1):
             subprocess.Popen(['ffplay', os.path.join("audio", chirp_type), '-nodisp', '-autoexit'],
                              stdout=subprocess.PIPE, 

@@ -255,7 +255,7 @@ class UI:
         for b in boxes:
             label, confidence, rect = b
             if not ui.muted and confidence > 0.9:
-                if label not in ("chair", "cake", "fire hydrant", "bird", "frisbee", "bowl", "spoon", "car", "clock", "parking meter", "cup"):
+                if label not in ("chair", "cake", "fire hydrant", "bird", "frisbee", "bowl", "spoon", "car", "clock", "parking meter", "cup", "bench"):
                     ui.speak(label.replace("person", "intruder"))
                     if label == "person":
                         intruder_thread_start(ui.bridge)

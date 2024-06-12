@@ -25,7 +25,11 @@ def create_config(path):
         config["onvif"]["port"] = int(config["onvif"]["port"])
     else:
         del config["onvif"]
+    
     config["image_server"] = "localhost"
+    config["output_dir"] = input("Output directory for images [default: ./images]: ")
+    if not config["output_dir"]:
+        config["output_dir"] = "images"
 
     if "cgi" not in config and "onvif" not in config:
         print("Warning: No CGI or ONVIF login provided. Camera control will be disabled.")
@@ -43,6 +47,12 @@ def load_config(path):
         print(f"No configuration file found at {path}, creating new one")
         config = create_config(path)
     config["config_path"] = path
+
+    image_dir = config.get("output_dir", "images")
+    if not os.path.exists(image_dir):
+        print(f"Image directory {image_dir} does not exist. Creating it now")
+        os.mkdir(image_dir)
+
     return config
 
 

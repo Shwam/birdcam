@@ -37,11 +37,11 @@ class UI:
         pygame.font.init()
         self.font = pygame.font.SysFont('Consolas', 30)
         self.large_font = pygame.font.SysFont('Consolas', 60)
-        self.fullscreen = False
         self.fullscreen_size = 1920,1080
         self.windowed_size = 800,448
-        self.display_size=self.windowed_size
-        self.display = pygame.display.set_mode(self.display_size, pygame.RESIZABLE + pygame.DOUBLEBUF, 32)
+        self.fullscreen = bool(CONFIG.get("fullscreen", False))
+        self.display_size = self.fullscreen_size if self.fullscreen else self.windowed_size
+        self.display = pygame.display.set_mode(self.display_size, (pygame.FULLSCREEN if self.fullscreen else pygame.RESIZABLE) + pygame.DOUBLEBUF, 32)
         pygame.display.set_caption('Bird Cam Controls')
 
         # Initialize UI settings

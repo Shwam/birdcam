@@ -28,7 +28,7 @@ class UI:
     YELLOW = (255, 255, 102)
     PINK = (245, 115, 158)
     RED = (255, 30, 30)
-    IGNORED_CLASSES = ("chair", "cake", "fire hydrant", "bird", "frisbee", "bowl", "spoon", "car", "clock", "parking meter", "cup", "bench")
+    IGNORED_CLASSES = ("chair", "cake", "fire hydrant", "bird", "frisbee", "bowl", "spoon", "car", "clock", "parking meter", "cup", "bench", "umbrella", "vase")
 
     def __init__(self, CONFIG, cam):
         self.debug = False
@@ -134,7 +134,7 @@ class UI:
                     cam.zooming = True
                 elif event.key == pygame.K_SPACE:
                     ui.display.fill(UI.WHITE)
-                    pygame.display.update()
+                    pygame.display.flip()#update()
                     cam.take_snapshot()
                 elif event.key == pygame.K_i:
                     ui.infrared_index = (ui.infrared_index + 1) % 3
@@ -198,7 +198,7 @@ class UI:
             # center cursor
             pygame.draw.circle(ui.display,UI.BLACK,((ui.display_size[0]-10)/2,(ui.display_size[1]-10)/2), 10, 3)
 
-            ui.display.blit(ui.focus_info, (0,100))
+            #ui.display.blit(ui.focus_info, (0,100))
 
             if ui.click_point:
                 pygame.draw.circle(ui.display, (255,0,0), ui.click_point, 3, 3)
@@ -218,7 +218,7 @@ class UI:
             #    ui.write_bird_count(0)
 
         # Update the screen
-        pygame.display.update()
+        pygame.display.flip()#update()
         ui.display.fill(UI.BLACK)
 
     def display_feed(ui, cam):
@@ -226,7 +226,7 @@ class UI:
 
         image = cam.view("pygame")
 
-        ui.focus_info = ui.font.render(f'{cam.focus_amount(image):.2f}', False, UI.WHITE)
+        #ui.focus_info = ui.font.render(f'{cam.focus_amount(image):.2f}', False, UI.WHITE)
 
         if image is not None:
             image = pygame.transform.scale(image, ui.display_size)
@@ -261,7 +261,7 @@ class UI:
             if confidence > 0.9: 
                 if label not in ui.IGNORED_CLASSES and not ui.muted:
                     ui.speak(label.replace("person", "intruder"))
-                if ui.bridge and label in ["person", "bear"]:
+                if ui.bridge and label in ["person", "bear", "car", "truck"]:
                     print("INTRUDER! Activating floodlight")
                     intruder_thread_start(ui.bridge, ui.config["hue"]["light_names"])
             x1,y1,x2,y2 = rect
@@ -274,16 +274,19 @@ class UI:
             if label in ui.config["auto_screenshot_labels"]:
                 # take a screenshot
                 screenshot = True
-            if not ui.muted and label in ui.audio_files:
+            if not ui.muted and label in ui.audio_files and (label not in ui.IGNORED_CLASSES or label in ui.config.get("auto_screenshot_labels", [])):
                 # play the relevant alert sound
                 ui.chirp(ui.audio_files[label])
 
         if screenshot:
             print(f"DETECTED: {boxes}")
             fpath = os.path.join(ui.config.get("output_dir", "images"), timestamp + ".jpg")
-            with open(fpath, "wb") as f:
-                f.write(image)
-            util.save_xml(boxes, fpath)
+            try:
+                with open(fpath, "wb") as f:
+                    f.write(image)
+                util.save_xml(boxes, fpath)
+            except Exception as err:
+                print("Could not save {image} - out of disk space?", err)
             if "elastic" in ui.config:
                 ui.save_observation(labels_present, timestamp, fpath)
         
@@ -294,6 +297,8 @@ class UI:
 
 
     def chirp(self, chirp_type="bird.wav"):
+        if chirp_type[:4]=="bear" and datetime.now().hour > 5 and datetime.now().hour < 22:
+            return # It's probably not a true bear if it's in the day
         if time.time() > self.last_chirp.get(chirp_type, time.time() - 1):
             subprocess.Popen(['ffplay', os.path.join("audio", chirp_type), '-nodisp', '-autoexit'],
                              stdout=subprocess.PIPE, 
@@ -356,7 +361,7 @@ class UI:
             if "updated" in result:
                 print("Successfully updated bird count to", count)
             else:
-                print("Failed to update bird count:", result)
+                print("Failed to update bird count:", result, command)
  
     def write_bird_count(self, count):
         if "elastic" in self.config:

@@ -8,7 +8,11 @@ class ONVIFControl:
         self.__cam_user = config["onvif"].get("user", config["user"])
         self.__cam_password = config["onvif"].get("password", config["password"])
         self.__cam_port = config["onvif"].get("port", 80)
-        self.camera_start()
+        print(config["onvif"])
+        try:
+            self.camera_start()
+        except Exception as err:
+            print("Failed to establish ONVIF connection")
 
     @staticmethod
     def _map_onvif_to_vapix(value, min_onvif, max_onvif, min_vapix, max_vapix):

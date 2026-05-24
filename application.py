@@ -280,7 +280,17 @@ class UI:
 
         if screenshot:
             print(f"DETECTED: {boxes}")
-            fpath = os.path.join(ui.config.get("output_dir", "images"), timestamp + ".jpg")
+
+            # Split up path, to make it easier to search through & host as an image server
+            yy = timestamp[:2]
+            mm = timestamp[2:4]
+            dd = timestamp[4:6]
+            
+            directory = os.path.join(ui.config.get("output_dir", "images"), yy, mm, dd)
+            os.makedirs(directory, exist_ok=True)
+
+            fpath = os.path.join(directory, timestamp + ".jpg")
+
             try:
                 with open(fpath, "wb") as f:
                     f.write(image)

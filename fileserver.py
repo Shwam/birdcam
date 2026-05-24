@@ -52,7 +52,7 @@ def serve_file(filename=''):
 def serve_images(config):
     app.config['ROOT_DIR'] = os.path.abspath(config.get("output_dir", "images"))
     PORT = config.get("fileserver_port", 8080)
-    app.run(debug=True, host="0.0.0.0", port=PORT)
+    app.run(debug=False, host="0.0.0.0", port=PORT)
 
 if __name__ == '__main__':
     serve_images(util.load_config(".config"))

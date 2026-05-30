@@ -323,7 +323,7 @@ class UI:
         if chirp_type[:4]=="bear" and datetime.datetime.now().hour > 5 and datetime.datetime.now().hour < 22:
             return # It's probably not a true bear if it's in the day
         if time.time() > self.last_chirp.get(chirp_type, time.time() - 1):
-            subprocess.Popen(['ffplay', os.path.join("audio", chirp_type), '-nodisp', '-autoexit'],
+            subprocess.Popen(['ffplay', os.path.join(self.config.get("audio_dir", "audio"), chirp_type), '-nodisp', '-autoexit'],
                              stdout=subprocess.PIPE, 
                              stderr=subprocess.PIPE)
         self.last_chirp[chirp_type] = time.time() + 360
@@ -331,8 +331,9 @@ class UI:
     def speak(self, text):  
         myobj = gTTS(text=text, lang="en", slow=False)
           
-        myobj.save("audio/voice.mp3")
-        os.system("(ffplay audio/voice.mp3 -autoexit -nodisp -af 'volume=0.1' > /dev/null 2>&1)&")
+        obj_path = os.path.join(self.config.get("audio_dir", "audio"), "voice.mp3")
+        myobj.save(obj_path)
+        os.system(f"(ffplay {obj_path} -autoexit -nodisp -af 'volume=0.1' > /dev/null 2>&1)&")
 
     def run(ui, ai, cam):
         ui.update_size()

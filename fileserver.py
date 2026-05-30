@@ -31,6 +31,8 @@ def dir_to_html(directory):
 
     full_path = os.path.join(current_app.config["ROOT_DIR"], directory)
     for fname in sorted(os.listdir(full_path)):
+        if fname[0] == ".":
+            continue
         path = Path(os.path.join(full_path, fname))
         if path.is_dir():
             link_text = fname

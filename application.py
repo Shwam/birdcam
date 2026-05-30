@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import os
 import sys
-from datetime import datetime
+import datetime
 import random
 import subprocess
 import threading
@@ -58,6 +58,7 @@ class UI:
         self.last_chirp = dict()
         self.bird_boxes = []
         self.last_image = None
+        self.last_event = []
 
         cam.set_name("birdcam")
         cam.set_time()
@@ -269,24 +270,30 @@ class UI:
                 labels_present[label] = labels_present.get(label, 0) + 1 
 
         # Check for labels of interest
+        labels_of_interest = sorted([label for label in labels_present if label in ui.config.get("auto_screenshot_labels", tuple())])
         screenshot = False
         for label in labels_present:
-            if label in ui.config["auto_screenshot_labels"]:
-                # take a screenshot
-                screenshot = True
             if not ui.muted and label in ui.audio_files and (label not in ui.IGNORED_CLASSES or label in ui.config.get("auto_screenshot_labels", [])):
                 # play the relevant alert sound
                 ui.chirp(ui.audio_files[label])
 
-        if screenshot:
+        if labels_of_interest:
             print(f"DETECTED: {boxes}")
+            current_timestamp = datetime.datetime.strptime(timestamp, "%y%m%d%H%M%S%f")
 
             # Split up path, to make it easier to search through & host as an image server
             yy = timestamp[:2]
             mm = timestamp[2:4]
             dd = timestamp[4:6]
-            
-            directory = os.path.join(ui.config.get("output_dir", "images"), yy, mm, dd)
+            if ui.last_event and (current_timestamp-ui.last_event[-1]) < datetime.timedelta(seconds=7):
+                # Add this on to the last event, if not much time has passed
+                ui.last_event.append(current_timestamp)
+                
+            else:
+                # Start a new event
+                ui.last_event = [current_timestamp,]
+            label_list="_".join(labels_of_interest)
+            directory = os.path.join(ui.config.get("output_dir", "images"), yy, mm, dd, f"{ui.last_event[0].strftime('%H%M%S')}_{label_list}")
             os.makedirs(directory, exist_ok=True)
 
             fpath = os.path.join(directory, timestamp + ".jpg")
@@ -294,11 +301,17 @@ class UI:
             try:
                 with open(fpath, "wb") as f:
                     f.write(image)
+                if len(ui.last_event) == 1:
+                    # Save thumbnail
+                    with open(os.path.join(directory, ".thumb.jpg"), "wb") as f:
+                        f.write(image)
+
                 util.save_xml(boxes, fpath)
             except Exception as err:
                 print("Could not save {image} - out of disk space?", err)
             if "elastic" in ui.config:
                 ui.save_observation(labels_present, timestamp, fpath)
+        
         
         #if "bird" in labels_present:
         #    with open("sightings.txt", "a") as f:
@@ -307,7 +320,7 @@ class UI:
 
 
     def chirp(self, chirp_type="bird.wav"):
-        if chirp_type[:4]=="bear" and datetime.now().hour > 5 and datetime.now().hour < 22:
+        if chirp_type[:4]=="bear" and datetime.datetime.now().hour > 5 and datetime.datetime.now().hour < 22:
             return # It's probably not a true bear if it's in the day
         if time.time() > self.last_chirp.get(chirp_type, time.time() - 1):
             subprocess.Popen(['ffplay', os.path.join("audio", chirp_type), '-nodisp', '-autoexit'],

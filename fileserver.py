@@ -14,6 +14,13 @@ STYLE = """<style>img {
 a {
     font-size: 50px;
 }
+.thumbnail {
+  max-width: 50%;
+  height: auto;
+}
+.description {
+    font-size: 36px
+}
 </style>"""
 
 def dir_to_html(directory):
@@ -29,14 +36,23 @@ def dir_to_html(directory):
             link_text = fname
             if len(directory.split("/")) == 1:
                 link_text = "20" + fname
+                html += f'<a href="{fname}/">{link_text}</a>\n'
             elif len(directory.split("/")) == 2:
-                link_text = MONTHS[int(fname)] 
-            html += f'<a href="{fname}/">{link_text}</a>\n'
+                link_text = MONTHS[int(fname)-1] 
+                html += f'<a href="{fname}/">{link_text}</a>\n'
+            elif len(directory.split("/")) == 4: # Preview with thumbnail
+                html += f"""
+                <span style="font-size: 36px;">{", ".join(fname.split("_")[1:])}</span><br>
+        <a href="{fname}/">
+            <img class="thumbnail" src="{fname}/.thumb.jpg" alt="{fname}">
+        </a><br>"""
+            else:
+                html += f'<a href="{fname}/">{link_text}</a>\n'
         elif path.is_file() and fname[-4:].lower() == ".jpg":
             # Display images directly
             html += f"""
     <a href="{fname}">
-        <img src="{fname}" alt="Description of image">
+        <img src="{fname}" alt="{fname}">
     </a>"""
 
     return html
